@@ -2231,7 +2231,7 @@ class CNCCanvas(GLCanvas):
 
         v12 = p2 - p1
 
-        return numpy.rad2deg(numpy.acos(abs(dot(normalize(v12), planeNormal))))
+        return numpy.rad2deg(numpy.arccos(abs(dot(normalize(v12), planeNormal))))
 
     def canvas2WorldPlane(self, coords: vec2, planeNormal : vec3, planePoint : vec3, thresholdAngle = 20) -> vec3 | None:
         # return the point of the plane where we picked on the canvas, in world coordinates
@@ -2247,7 +2247,7 @@ class CNCCanvas(GLCanvas):
         v12 = p2 - p1
 
         # If we are too parallel to the plane, return None
-        angle = 90 - numpy.rad2deg(numpy.acos(abs(dot(normalize(v12), planeNormal))))
+        angle = 90 - numpy.rad2deg(numpy.arccos(abs(dot(normalize(v12), planeNormal))))
         if angle == 0 or angle < abs(thresholdAngle):
             return None
 
