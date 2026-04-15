@@ -306,8 +306,7 @@ class ProbeCommonFrame(CNCRibbon.PageFrame):
               text=_("Fast Probe Feed:")).grid(row=row, column=col, sticky=E)
         col += 1
         self.fastProbeFeed = StringVar()
-        self.fastProbeFeed.trace(
-            "w", lambda *_: ProbeCommonFrame.probeUpdate())
+        self.fastProbeFeed.trace_add('write', lambda *_: ProbeCommonFrame.probeUpdate())
         ProbeCommonFrame.fastProbeFeed = tkExtra.FloatEntry(
             frame,
             background=tkExtra.GLOBAL_CONTROL_BACKGROUND,
@@ -328,7 +327,7 @@ class ProbeCommonFrame(CNCRibbon.PageFrame):
         Label(frame, text=_("Probe Feed:")).grid(row=row, column=col, sticky=E)
         col += 1
         self.probeFeedVar = StringVar()
-        self.probeFeedVar.trace("w", lambda *_: ProbeCommonFrame.probeUpdate())
+        self.probeFeedVar.trace_add('write', lambda *_: ProbeCommonFrame.probeUpdate())
         ProbeCommonFrame.probeFeed = tkExtra.FloatEntry(
             frame,
             background=tkExtra.GLOBAL_CONTROL_BACKGROUND,
@@ -2299,7 +2298,7 @@ class ProbePage(CNCRibbon.Page):
 
         self.tabGroup = CNCRibbon.Page.groups["Probe"]
         self.tabGroup.tab.set("Probe")
-        self.tabGroup.tab.trace("w", self.tabChange)
+        self.tabGroup.tab.trace_add('write', self.tabChange)
 
     # -----------------------------------------------------------------------
     def tabChange(self, a=None, b=None, c=None):
