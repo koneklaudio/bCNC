@@ -3840,7 +3840,7 @@ class CanvasFrame(Frame):
 
         self.loadConfig()
 
-        self.view.trace("w", self.viewChange)
+        self.view.trace_add('write', self.viewChange)
 
         toolbar = Frame(self, relief=RAISED)
         toolbar.grid(row=0, column=0, columnspan=2, sticky=EW)
