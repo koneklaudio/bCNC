@@ -1216,7 +1216,7 @@ class CNCCanvas(GLCanvas):
         xy_w = self.canvas2WorldXY(vec2(x, y))
         
         if xy_w is not None:
-            self.app.goto(xy_w.x, xy_w.y, 0)
+            self.app.goto(xy_w.x, xy_w.y, None)
         else:
             self.status(
                 _("ERROR: Cannot set Gantry location with the current view (Too parallel to the XY plane)"))
@@ -1230,7 +1230,7 @@ class CNCCanvas(GLCanvas):
         xy_w = self.canvas2WorldXY(vec2(x, y))
         
         if xy_w is not None:
-            self.app.mcontrol._wcsSet(xy_w.x, xy_w.y, 0)
+            self.app.mcontrol._wcsSet(xy_w.x, xy_w.y, None)
         else:
             self.status(
                 _("ERROR: Cannot set WPOS with the current view (Too parallel to the XY plane)"))
