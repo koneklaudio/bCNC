@@ -531,6 +531,20 @@ class CNCCanvas(GLCanvas):
         # Create a Vertex Buffer Object (VBO)
         self.gantryVBO = glGenBuffers(1)
 
+        # ----- GANTRY LINES PROGRAM ------
+        # Vertex Shader code
+        with open(openglFolder + "GantryLinesVS.shd", "r") as file:
+            GantryLinesVSCode = file.read()
+
+        # Fragment Shader code
+        with open(openglFolder + "GantryLinesFS.shd", "r") as file:
+            GantryLinesFSCode = file.read()
+
+        self.gantryLinesProgram = self.createProgram(GantryLinesVSCode, GantryLinesFSCode)
+        
+        # Create a Vertex Buffer Object (VBO)
+        self.gantryLinesVBO = glGenBuffers(1)
+
         # ----- SELECTION RECT PROGRAM ------
         # Program to draw the selection rectangle
         # Vertex Shader code
@@ -3068,6 +3082,7 @@ class CNCCanvas(GLCanvas):
         glBindBuffer(GL_ARRAY_BUFFER, 0)
     
     def drawGantry(self):
+        # Draw cone faces
         glUseProgram(self.gantryProgram)
         glEnable(GL_CULL_FACE)
         glBindBuffer(GL_ARRAY_BUFFER, self.gantryVBO)
@@ -3096,7 +3111,8 @@ class CNCCanvas(GLCanvas):
         light2dir_loc = glGetUniformLocation(program=self.gantryProgram, name="light2dir")
         glUniform3fv(light2dir_loc, 1, value_ptr(light2dir))
 
-        diameter = max(6., CNC.vars["diameter"])
+        #diameter = max(6., CNC.vars["diameter"])
+        diameter = CNC.vars["diameter"]
         diameter_loc = glGetUniformLocation(program=self.gantryProgram, name="diameter")
         glUniform1f(diameter_loc, diameter)
         
@@ -3106,6 +3122,39 @@ class CNCCanvas(GLCanvas):
         size = glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE) // 4
         glDrawArrays(GL_TRIANGLES, 0, size // PARAMETERS_PER_VERTEX)
         glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+        # Draw gantry lines (When the view is so close to XY that the cone tip is hidden)
+        if self.viewAngle(vec3(0, 0, 1)) < 18.435:
+            glDisable(GL_DEPTH_TEST)
+            glUseProgram(self.gantryLinesProgram)
+            glBindBuffer(GL_ARRAY_BUFFER, self.gantryLinesVBO)
+            PARAMETERS_PER_VERTEX = 3
+            glVertexAttribPointer(glGetAttribLocation(self.gantryLinesProgram, "xyz"), 3, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, None)
+            glEnableVertexAttribArray(glGetAttribLocation(self.gantryLinesProgram, "xyz"))
+
+            gantry_color = vec3(self.rgb8(GANTRY_COLOR))
+            gantry_color_loc = glGetUniformLocation(program=self.gantryLinesProgram, name="gantryColor")
+            glUniform3fv(gantry_color_loc, 1, value_ptr(gantry_color))
+            
+            MVP = self.PMatrix * self.MVMatrix
+            mv_loc = glGetUniformLocation(program=self.gantryLinesProgram, name="MVP")
+            glUniformMatrix4fv(mv_loc, 1, False, value_ptr(MVP))
+            
+            location_loc = glGetUniformLocation(program=self.gantryLinesProgram, name="location")
+            glUniform3fv(location_loc, 1, value_ptr(self._gantryLocation))
+
+            #diameter = max(6., CNC.vars["diameter"])
+            diameter = CNC.vars["diameter"]
+            diameter_loc = glGetUniformLocation(program=self.gantryLinesProgram, name="diameter")
+            glUniform1f(diameter_loc, diameter)
+            
+            glLineWidth(1)
+            glEnable(GL_LINE_SMOOTH)
+            glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)
+            size = glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE) // 4
+            glDrawArrays(GL_LINES, 0, size // PARAMETERS_PER_VERTEX)
+            glBindBuffer(GL_ARRAY_BUFFER, 0)
+
 
     def drawArrows(self, vbo):
         glEnable(GL_DEPTH_TEST)
@@ -3325,6 +3374,23 @@ class CNCCanvas(GLCanvas):
         glBindBuffer(GL_ARRAY_BUFFER, self.gantryVBO)
         glBufferData(GL_ARRAY_BUFFER, gantryVertices.nbytes, gantryVertices, GL_STATIC_DRAW)
         glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+        # Create the vertices of the 4 lines going from the cone tip to the base
+        gantryLinesVertices = numpy.array([
+            0, 0, 0,
+            gr, 0, gh,
+            0, 0, 0,
+            0, gr, gh,
+            0, 0, 0,
+            -gr, 0, gh,
+            0, 0, 0,
+            0, -gr, gh
+        ], dtype=numpy.float32)
+
+        glBindBuffer(GL_ARRAY_BUFFER, self.gantryLinesVBO)
+        glBufferData(GL_ARRAY_BUFFER, gantryLinesVertices.nbytes, gantryLinesVertices, GL_STATIC_DRAW)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
 
     # ----------------------------------------------------------------------
     # Create system axes
