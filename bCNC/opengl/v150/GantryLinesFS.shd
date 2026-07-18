@@ -2,7 +2,7 @@
 
 uniform vec3 gantryColor;
 
-out vec4 fragColor
+out vec4 fragColor;
 
 void main() {
     fragColor = vec4(gantryColor / 255. * 0.75, 1.);

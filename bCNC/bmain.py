@@ -537,6 +537,7 @@ class Application(Tk, Sender):
         # END - insertCount lines where ok was applied to for $xxx commands
         self._insertCount = (0)
         self._selectI = 0
+        self.lastProcessedPath = 0
         self.monitorSerial()
         self.canvasFrame.toggleDrawFlag()
 
@@ -2594,29 +2595,7 @@ class Application(Tk, Sender):
                 return
 
             # reset colors
-            before = time.time()
-            ENABLE_COLOR_FLOAT = self.canvas.rgb2float(self.canvas.rgb8(CNCCanvas.ENABLE_COLOR))
-            for ij in self._paths:  # Slow loop
-                if not ij:
-                    continue
-                path = self.gcode[ij[0]].path(ij[1])
-                if path:
-                    # TODO: Check if path color change works. No width change
-                    self.canvas.set_color(self.canvas.pathVertices, path, ENABLE_COLOR_FLOAT)
-                    """
-                    color = self.canvas.itemcget(path, "fill")
-                    if color != CNCCanvas.ENABLE_COLOR:
-                        self.canvas.itemconfig(
-                            path, width=1, fill=CNCCanvas.ENABLE_COLOR
-                        )
-                    """
-                    # Force a periodic update since this loop can take time
-                    if time.time() - before > 0.25:
-                        self.update()
-                        before = time.time()
-
-            # Load line data to the GPU
-            self.canvas.vertices_to_buffer(self.canvas.pathVertices, self.canvas.pathVBO)
+            self.lastProcessedPath = 0
 
             # the buffer of the machine should be empty?
             self._runLines = len(self._paths) + 1  # plus the wait
@@ -2819,8 +2798,6 @@ class Application(Tk, Sender):
             self.bufferbar.setText(f"{Sender.getBufferFill(self):3.0f}%")
 
             if self._selectI >= 0 and self._paths:
-                PROCESS_COLOR_FLOAT = self.canvas.rgb2float(self.canvas.rgb8(CNCCanvas.PROCESS_COLOR))
-
                 while self._selectI <= self._gcount and self._selectI < len(
                     self._paths
                 ):
@@ -2828,17 +2805,10 @@ class Application(Tk, Sender):
                         i, j = self._paths[self._selectI]
                         path = self.gcode[i].path(j)
                         if path:
-                            # TODO: Check path color change.
-                            self.canvas.set_color(self.canvas.pathVertices, path, PROCESS_COLOR_FLOAT)
-                            pass
-                            """
-                            self.canvas.itemconfig(
-                                path, width=2, fill=CNCCanvas.PROCESS_COLOR
-                            )
-                            """
+                            self.lastProcessedPath = path
                     self._selectI += 1
                 
-                self.canvas.vertices_to_buffer(self.canvas.pathVertices, self.canvas.pathVBO)
+                #self.canvas.vertices_to_buffer(self.canvas.pathVertices, self.canvas.pathVBO)
 
             if self._gcount >= self._runLines:
                 self.runEnded()

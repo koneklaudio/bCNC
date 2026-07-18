@@ -494,7 +494,6 @@ class CNCCanvas(GLCanvas):
         self.linesProgram = self.createProgram(LinesVSCode, LinesFSCode)
         
         # Create a Vertex Buffer Object (VBO)
-        self.pathVBO = glGenBuffers(1)
         self.marginsVBO = glGenBuffers(1)
         self.workAreaVBO = glGenBuffers(1)
         self.infoVBO = glGenBuffers(1)
@@ -503,6 +502,20 @@ class CNCCanvas(GLCanvas):
         self.vectorVBO = glGenBuffers(1)
         self.gridVBO = glGenBuffers(1)
         
+        # ----- TOOLPATH PROGRAM ------
+        # Vertex Shader code
+        with open(openglFolder + "ToolPathVS.shd", "r") as file:
+            ToolPathVSCode = file.read()
+
+        # Fragment Shader code
+        with open(openglFolder + "ToolPathFS.shd", "r") as file:
+            ToolPathFSCode = file.read()
+
+        self.toolPathProgram = self.createProgram(ToolPathVSCode, ToolPathFSCode)
+        
+        # Create a Vertex Buffer Object (VBO)
+        self.pathVBO = glGenBuffers(1)
+
         # ----- AXES PROGRAM ------
         # Vertex Shader code
         with open(openglFolder + "AxesVS.shd", "r") as file:
@@ -2828,10 +2841,10 @@ class CNCCanvas(GLCanvas):
         glClear(GL_DEPTH_BUFFER_BIT)
         self.drawLines(self.orientVBO, 3)
         
-        # Draw path
+        # Draw paths
         glClear(GL_DEPTH_BUFFER_BIT)
         if self.pathVertices.size > 0:
-            self.drawLines(self.pathVBO, 2)
+            self.drawPaths(self.pathVBO, 2)
         
         # Draw arrows
         if len(self.pathArrows) > 0:
@@ -3075,6 +3088,56 @@ class CNCCanvas(GLCanvas):
         glUniform3fv(disable_color_loc, 1, value_ptr(disable_color))
 
 
+
+        glLineWidth(lineWidth)
+        size = glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE) // 4
+        glDrawArrays(GL_LINES, 0, size // PARAMETERS_PER_VERTEX)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+    
+    def drawPaths(self, vbo, lineWidth):
+        glEnable(GL_DEPTH_TEST)
+        glUseProgram(self.toolPathProgram)
+        glBindBuffer(GL_ARRAY_BUFFER, vbo)
+        PARAMETERS_PER_VERTEX = 8
+        glVertexAttribPointer(glGetAttribLocation(self.toolPathProgram, "id"), 1, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, None)
+        glVertexAttribPointer(glGetAttribLocation(self.toolPathProgram, "xyz"), 3, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(1*4))
+        glVertexAttribPointer(glGetAttribLocation(self.toolPathProgram, "pos"), 1, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(4*4))
+        glVertexAttribPointer(glGetAttribLocation(self.toolPathProgram, "colorValue"), 1, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(5*4))
+        glVertexAttribPointer(glGetAttribLocation(self.toolPathProgram, "dashRatio"), 1, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(6*4))
+        glVertexAttribPointer(glGetAttribLocation(self.toolPathProgram, "flags"), 1, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(7*4))
+        glEnableVertexAttribArray(glGetAttribLocation(self.toolPathProgram, "id"))
+        glEnableVertexAttribArray(glGetAttribLocation(self.toolPathProgram, "xyz"))
+        glEnableVertexAttribArray(glGetAttribLocation(self.toolPathProgram, "pos"))
+        glEnableVertexAttribArray(glGetAttribLocation(self.toolPathProgram, "colorValue"))
+        glEnableVertexAttribArray(glGetAttribLocation(self.toolPathProgram, "dashRatio"))
+        glEnableVertexAttribArray(glGetAttribLocation(self.toolPathProgram, "flags"))
+
+
+        MVP = self.PMatrix * self.MVMatrix
+        mv_loc = glGetUniformLocation(program=self.toolPathProgram, name="MVP")
+        glUniformMatrix4fv(mv_loc, 1, False, value_ptr(MVP))
+
+        zoom_loc = glGetUniformLocation(program=self.toolPathProgram, name="zoom")
+        glUniform1f(zoom_loc, self.zoom)
+
+        select_color = vec3(self.rgb8(SELECT_COLOR))
+        select_color_loc = glGetUniformLocation(program=self.toolPathProgram, name="selectColor")
+        glUniform3fv(select_color_loc, 1, value_ptr(select_color))
+
+        select2_color = vec3(self.rgb8(SELECT2_COLOR))
+        select2_color_loc = glGetUniformLocation(program=self.toolPathProgram, name="select2Color")
+        glUniform3fv(select2_color_loc, 1, value_ptr(select2_color))
+
+        disable_color = vec3(self.rgb8(DISABLE_COLOR))
+        disable_color_loc = glGetUniformLocation(program=self.toolPathProgram, name="disableColor")
+        glUniform3fv(disable_color_loc, 1, value_ptr(disable_color))
+        
+        process_color = vec3(self.rgb8(PROCESS_COLOR))
+        process_color_loc = glGetUniformLocation(program=self.toolPathProgram, name="processColor")
+        glUniform3fv(process_color_loc, 1, value_ptr(process_color))
+        
+        lastProcessedPath_loc = glGetUniformLocation(program=self.toolPathProgram, name="lastProcessedPath")
+        glUniform1f(lastProcessedPath_loc, self.app.lastProcessedPath)
 
         glLineWidth(lineWidth)
         size = glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE) // 4
