@@ -2000,7 +2000,7 @@ class CNCCanvas(GLCanvas):
     # ----------------------------------------------------------------------
     # Snap to the closest point if any
     # ----------------------------------------------------------------------
-    def snapPoint(self, clickPoint: vec2, excludeSelected = False) -> tuple[vec3 | None, int | None]:
+    def snapPoint(self, clickPoint: vec2, excludeSelected = False): # -> tuple[vec3 | None, int | None]
         """
         When clicking on the canvas at point clickPoint, return the world coordinates of a close path point, or none
         And the snap point type: 0: Point on Line ; 1: Line End ; 2: Arc Center
