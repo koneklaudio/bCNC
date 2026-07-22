@@ -203,7 +203,7 @@ FLAG_ENABLED = 0b10
 #FLAG_XXX = 0b100
 #FLAG_XXX = 0b1000
 
-openglFolder = f"{os.path.abspath(os.path.dirname(__file__))}{os.sep}opengl{os.sep}v100{os.sep}"
+openglFolder = f"{os.path.abspath(os.path.dirname(__file__))}{os.sep}opengl{os.sep}v120{os.sep}"
 
 # -----------------------------------------------------------------------------
 def mouseCursor(action):
@@ -377,17 +377,29 @@ class CNCCanvas(GLCanvas):
             
         print("Profile mask:", profile_mask)
 
-        # Try GLSL 1.00. If failed, change to 1.50
+        # Try GLSL 1.20. If failed, change to 1.50
+        global openglFolder
         try:
             self.initGL()
+            print("Running GLSL 1.20")
         except Exception as e:
             print("----------")
             print(e)
-            print("GLSL 1.00 failed. Trying GLSL 1.50...")
+            print("GLSL 1.20 failed. Trying GLSL 1.50...")
             print("----------")
-            global openglFolder
-            openglFolder = f"{os.path.abspath(os.path.dirname(__file__))}{os.sep}opengl{os.sep}v150{os.sep}"
-            self.initGL()
+
+            try:
+                openglFolder = f"{os.path.abspath(os.path.dirname(__file__))}{os.sep}opengl{os.sep}v150{os.sep}"
+                self.initGL()
+                print("Running GLSL 1.50")
+            except Exception as e:
+                print("----------")
+                print(e)
+                print("GLSL 1.50 failed. Trying GLSL 1.00...")
+                print("----------")
+                openglFolder = f"{os.path.abspath(os.path.dirname(__file__))}{os.sep}opengl{os.sep}v100{os.sep}"
+                self.initGL()
+                print("Running GLSL 1.00")
         
         print("============================")
 
