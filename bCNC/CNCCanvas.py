@@ -296,7 +296,6 @@ class CNCCanvas(GLCanvas):
 
         self._probeImage = None
         self._probeTkImage = None
-        self._probe = None
         self.probeMaxZ = 10
         self.probeMinZ = -10
         self.probeMaxHeight = 10
@@ -3709,8 +3708,13 @@ class CNCCanvas(GLCanvas):
     # ----------------------------------------------------------------------
     def drawProbe(self):
         self.probeDict = {}
-        if self._probe:
-            self._probe = None
+        self.update_lines_buffer(self.probeVBO, self.probeDict)
+        self.probeText = {}
+        self.update_text_buffer(self.ProbeTextVBO, self.probeText)
+        # Clear image map if numpy exists
+        if (numpy is not None):
+            self.clear_probe_map_buffer()
+
         if not self.draw_probe:
             self.queueDraw()
             return
@@ -3797,6 +3801,14 @@ class CNCCanvas(GLCanvas):
 
         size = glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE) // 4
         glDrawArrays(GL_TRIANGLES, 0, size // PARAMETERS_PER_VERTEX)
+
+    def clear_probe_map_buffer(self):
+        probeMapVertices = numpy.array([], dtype=numpy.float32)
+
+        glBindBuffer(GL_ARRAY_BUFFER, self.ProbeMapVBO)
+        glBufferData(GL_ARRAY_BUFFER, probeMapVertices.nbytes, probeMapVertices, GL_STATIC_DRAW)
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0)  # Unbind the VBO
 
     def update_probe_map_buffer(self):
         probe = self.gcode.probe
