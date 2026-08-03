@@ -296,9 +296,7 @@ class CNCCanvas(GLCanvas):
 
         self._probeImage = None
         self._probeTkImage = None
-        self.probeMaxZ = 10
-        self.probeMinZ = -10
-        self.probeMaxHeight = 10
+        self.probeMapHeightScale = 1
 
         self.camera = Camera.Camera("aligncam")
         self.cameraAnchor = CENTER  # Camera anchor location "" for gantry
@@ -410,6 +408,16 @@ class CNCCanvas(GLCanvas):
         self.createGantry()
 
         self.initPosition()
+
+        # Lines for debugging
+        """
+        probe = self.app.gcode.probe
+        probe.start = True
+        probe.makeMatrix()
+        probe.points = []
+        probe.add(0, 0, 3.7)
+        probe.add(100, 100, -2.2)
+        """
     
     def get_camera_image(self):
         if (self.camera.image is None) or (cv is None):
@@ -2240,21 +2248,21 @@ class CNCCanvas(GLCanvas):
         
         return (MVPinv * vec4(coordsUnit, 0, 1)).xyz
     
-    def canvas2WorldXY(self, coords : vec2, thresholdAngle = 20) -> vec3 | None:
+    def canvas2WorldXY(self, coords : vec2, thresholdAngle = 20): # -> vec3 | None:
         intersection = self.canvas2WorldPlane(coords, vec3(0, 0, 1), vec3(0, 0, 0), thresholdAngle)
         if intersection == None:
             return None
         else:
             return intersection
     
-    def canvas2WorldYZ(self, coords : vec2, thresholdAngle = 20) -> vec3 | None:
+    def canvas2WorldYZ(self, coords : vec2, thresholdAngle = 20): # -> vec3 | None:
         intersection = self.canvas2WorldPlane(coords, vec3(1, 0, 0), vec3(0, 0, 0), thresholdAngle)
         if intersection == None:
             return None
         else:
             return intersection
     
-    def canvas2WorldXZ(self, coords : vec2, thresholdAngle = 20) -> vec3 | None:
+    def canvas2WorldXZ(self, coords : vec2, thresholdAngle = 20): # -> vec3 | None:
         intersection = self.canvas2WorldPlane(coords, vec3(0, 1, 0), vec3(0, 0, 0), thresholdAngle)
         if intersection == None:
             return None
@@ -2276,7 +2284,7 @@ class CNCCanvas(GLCanvas):
 
         return numpy.rad2deg(numpy.arccos(abs(dot(normalize(v12), planeNormal))))
 
-    def canvas2WorldPlane(self, coords: vec2, planeNormal : vec3, planePoint : vec3, thresholdAngle = 20) -> vec3 | None:
+    def canvas2WorldPlane(self, coords: vec2, planeNormal : vec3, planePoint : vec3, thresholdAngle = 20): # -> vec3 | None:
         # return the point of the plane where we picked on the canvas, in world coordinates
         # If the plane is too parallel to the screen (less than thresholdAngle), return None
         coords_u = self.canvas2Unit(coords)
@@ -3739,38 +3747,28 @@ class CNCCanvas(GLCanvas):
         
         self.update_lines_buffer(self.probeVBO, self.probeDict)
 
-        # Lines for debugging
-        """
-        probe.start = True
-        probe.makeMatrix()
-        probe.points = []
-        probe.add(500, 235, 3.7)
-        probe.add(725, 235, -2.2)
-        """
-
         # Draw probe points text
-        # Normalize the map height to a 10% of the minimum map side
-        if probe.matrix:
-            probeMaxZ = numpy.max(probe.matrix)
-            probeMinZ = numpy.min(probe.matrix)
-            probeMaxHeight = 0.1 * min(probe.xmax - probe.xmin, probe.ymax - probe.ymin)
-            ratioZ = probeMaxHeight / max(abs(probeMaxZ), abs(probeMinZ))
-
-            self.probeText = {}
-            for i, location in enumerate(probe.points):
-                item = self.create_text(
-                    self.probeText,
-                    vec3(location[0], location[1], location[2] * ratioZ),
-                    f"{probe.points[i][2]:.{CNC.digits}f}",
-                    self.rgb8(PROBE_TEXT_COLOR))
-
-            self.update_text_buffer(self.ProbeTextVBO, self.probeText)
+        self.updateProbeText()
 
         # Draw image map if numpy exists
         if (numpy is not None and probe.matrix):
             self.update_probe_map_buffer()
 
         self.queueDraw()
+
+    def updateProbeText(self):
+        probe = self.gcode.probe
+
+        if probe.matrix:
+            self.probeText = {}
+            for i, location in enumerate(probe.points):
+                item = self.create_text(
+                    self.probeText,
+                    vec3(location[0], location[1], location[2] * self.probeMapHeightScale),
+                    f"{probe.points[i][2]:.{CNC.digits}f}",
+                    self.rgb8(PROBE_TEXT_COLOR))
+
+            self.update_text_buffer(self.ProbeTextVBO, self.probeText)
 
     def drawProbeMap(self):
         glEnable(GL_DEPTH_TEST)
@@ -3787,14 +3785,8 @@ class CNCCanvas(GLCanvas):
         mv_loc = glGetUniformLocation(program=self.ProbeMapProgram, name="MVP")
         glUniformMatrix4fv(mv_loc, 1, False, value_ptr(MVP))
 
-        maxZ_loc = glGetUniformLocation(program=self.ProbeMapProgram, name="maxZ")
-        glUniform1f(maxZ_loc, self.probeMaxZ)
-
-        minZ_loc = glGetUniformLocation(program=self.ProbeMapProgram, name="minZ")
-        glUniform1f(minZ_loc, self.probeMinZ)
-
-        maxHeight_loc = glGetUniformLocation(program=self.ProbeMapProgram, name="maxHeight")
-        glUniform1f(maxHeight_loc, self.probeMaxHeight)
+        heightScale_loc = glGetUniformLocation(program=self.ProbeMapProgram, name="heightScale")
+        glUniform1f(heightScale_loc, self.probeMapHeightScale)
 
         alpha_loc = glGetUniformLocation(program=self.ProbeMapProgram, name="alpha")
         glUniform1f(alpha_loc, 0.5)
@@ -3813,50 +3805,54 @@ class CNCCanvas(GLCanvas):
     def update_probe_map_buffer(self):
         probe = self.gcode.probe
 
-        self.probeMaxZ = numpy.max(probe.matrix)
-        self.probeMinZ = numpy.min(probe.matrix)
-
-        # Normalize the map height to a 10% of the minimum map side
-        self.probeMaxHeight = 0.1 * min(probe.xmax - probe.xmin, probe.ymax - probe.ymin)
+        probeMaxZ = numpy.max(probe.matrix)
+        probeMinZ = numpy.min(probe.matrix)
 
         probeMapData = []
 
+        # Get matrix size and steps (based on the matrix size, not on the last xn and yn input in the ProbePage widgets. 
+        # The matrix size will match xn and yn when probe data is loaded or scan is performed)
+        m = len(probe.matrix[0])
+        n = len(probe.matrix)
+        mstep = (probe.xmax - probe.xmin) / (m - 1)
+        nstep = (probe.ymax - probe.ymin) / (n - 1)
+
         # Each quad of the map is drawn as two triangles (6 vertices)
-        for j in range(probe.yn - 1):
-            for i in range(probe.xn - 1):
-                color1 = self.blue2red(probe.matrix[j][i], self.probeMinZ, self.probeMaxZ)
-                color2 = self.blue2red(probe.matrix[j][i + 1], self.probeMinZ, self.probeMaxZ)
-                color3 = self.blue2red(probe.matrix[j + 1][i + 1], self.probeMinZ, self.probeMaxZ)
-                color4 = self.blue2red(probe.matrix[j + 1][i], self.probeMinZ, self.probeMaxZ)
+        for j in range(n - 1):
+            for i in range(m - 1):
+                color1 = self.blue2red(probe.matrix[j][i], probeMinZ, probeMaxZ)
+                color2 = self.blue2red(probe.matrix[j][i + 1], probeMinZ, probeMaxZ)
+                color3 = self.blue2red(probe.matrix[j + 1][i + 1], probeMinZ, probeMaxZ)
+                color4 = self.blue2red(probe.matrix[j + 1][i], probeMinZ, probeMaxZ)
                 probeMapData.extend([
                     # Corner 1
-                    probe.xmin + i * probe.xstep(),
-                    probe.ymin + j * probe.ystep(),
+                    probe.xmin + i * mstep,
+                    probe.ymin + j * nstep,
                     probe.matrix[j][i],
                     (int(color1.x) << 16) + (int(color1.y) << 8) + int(color1.z),
                     # Corner 2
-                    probe.xmin + (i + 1) * probe.xstep(),
-                    probe.ymin + j * probe.ystep(),
+                    probe.xmin + (i + 1) * mstep,
+                    probe.ymin + j * nstep,
                     probe.matrix[j][i + 1],
                     (int(color2.x) << 16) + (int(color2.y) << 8) + int(color2.z),
                     # Corner 3
-                    probe.xmin + (i + 1) * probe.xstep(),
-                    probe.ymin + (j + 1) * probe.ystep(),
+                    probe.xmin + (i + 1) * mstep,
+                    probe.ymin + (j + 1) * nstep,
                     probe.matrix[j + 1][i + 1],
                     (int(color3.x) << 16) + (int(color3.y) << 8) + int(color3.z),
                     # Corner 1
-                    probe.xmin + i * probe.xstep(),
-                    probe.ymin + j * probe.ystep(),
+                    probe.xmin + i * mstep,
+                    probe.ymin + j * nstep,
                     probe.matrix[j][i],
                     (int(color1.x) << 16) + (int(color1.y) << 8) + int(color1.z),
                     # Corner 3
-                    probe.xmin + (i + 1) * probe.xstep(),
-                    probe.ymin + (j + 1) * probe.ystep(),
+                    probe.xmin + (i + 1) * mstep,
+                    probe.ymin + (j + 1) * nstep,
                     probe.matrix[j + 1][i + 1],
                     (int(color3.x) << 16) + (int(color3.y) << 8) + int(color3.z),
                     # Corner 4
-                    probe.xmin + i * probe.xstep(),
-                    probe.ymin + (j + 1) * probe.ystep(),
+                    probe.xmin + i * mstep,
+                    probe.ymin + (j + 1) * nstep,
                     probe.matrix[j + 1][i],
                     (int(color4.x) << 16) + (int(color4.y) << 8) + int(color4.z),
                 ])

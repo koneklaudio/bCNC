@@ -6,9 +6,7 @@ attribute vec3 location; // In world units.
 attribute float colorValue;
 
 uniform mat4 MVP;
-uniform float maxZ;
-uniform float minZ;
-uniform float maxHeight; // We normalize the z value of the vertices, so that the one with the max(abs(Z)) has a z value of maxHeight
+uniform float heightScale;
 
 varying vec3 color;     // Color passed to fragment shader
 
@@ -18,9 +16,6 @@ void main() {
     float B = mod(colorValue, 256.0);
 
     color = vec3(R, G, B) / 255.;
-
-    float maxAbsZ = max(abs(maxZ), abs(minZ));
-    float ratioZ = abs(maxHeight) / maxAbsZ;
     
-    gl_Position = MVP * vec4(location.x, location.y, location.z * ratioZ, 1.);
+    gl_Position = MVP * vec4(location.x, location.y, location.z * heightScale, 1.);
 }
