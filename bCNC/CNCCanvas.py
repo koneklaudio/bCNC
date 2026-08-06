@@ -240,6 +240,8 @@ class CNCCanvas(GLCanvas):
         self.gcode = app.gcode
         self.actionVar = IntVar()
 
+        self.windowing_system = self.app.call('tk', 'windowingsystem')
+
         # Canvas binding
         self.bind("<Configure>", self.configureEvent)
         self.bind("<Motion>", self.motion)
@@ -2437,7 +2439,13 @@ class CNCCanvas(GLCanvas):
 
     # ----------------------------------------------------------------------
     def wheel(self, event):
-        self.zoomCanvas(event.x, event.y, pow(ZOOM, (event.delta // 120)))
+        # In windows, each wheel step counts 120
+        if self.windowing_system == "win32":
+            wheel_step = 120
+        else:
+            wheel_step = 1
+
+        self.zoomCanvas(event.x, event.y, pow(ZOOM, (event.delta // wheel_step)))
 
     # ----------------------------------------------------------------------
     # Change the insert marker location
