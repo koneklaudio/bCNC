@@ -2832,13 +2832,14 @@ class CNCCanvas(GLCanvas):
     def draw(self):
         self.make_current()
         width, height = self.winfo_width(), self.winfo_height()
-        glViewport(0, 0, width, height)
         
         # Check readiness of the buffer
         if glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE:
             self._drawRequested = False
             self.queueDraw()
             return
+
+        glViewport(0, 0, width, height)
         
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT) # type: ignore
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
