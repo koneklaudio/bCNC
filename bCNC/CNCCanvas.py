@@ -1294,7 +1294,7 @@ class CNCCanvas(GLCanvas):
     # Add an orientation marker at mouse location
     # ----------------------------------------------------------------------
     def actionAddOrient(self, x, y):
-        clickedPoint = self.snapPoint(vec2(x, y))
+        clickedPoint, pointType = self.snapPoint(vec2(x, y))
         
         # Proyect the canvas cx, cy point to the world xy plane
         if clickedPoint is None:
