@@ -160,6 +160,7 @@ ACTION_SELECT_DOUBLE = 3
 
 ACTION_PAN = 10
 ACTION_ORIGIN = 11
+ACTION_ZOOM = 12
 
 ACTION_MOVE = 20
 ACTION_ROTATE = 21
@@ -194,6 +195,7 @@ MOUSE_CURSOR = {
     ACTION_WPOS: "diamond_cross",
     ACTION_RULER: "tcross",
     ACTION_ADDORIENT: "tcross",
+    ACTION_ZOOM: "circle"
 }
 
 # Path lines Flags are stored in a float32 value for each vertex. 
@@ -251,6 +253,7 @@ class CNCCanvas(GLCanvas):
         self.bind("<Double-1>", self.double)
 
         self.bind("<Button-2>", self.midClick)
+        self.bind("<Shift-B2-Motion>", self.midZoom)
         self.bind("<B2-Motion>", self.pan)
         self.bind("<ButtonRelease-2>", self.midRelease)
         self.bind("<Button-4>", self.mouseZoomIn)
@@ -1471,8 +1474,8 @@ class CNCCanvas(GLCanvas):
 
 
     def midClick(self, event):
-        self._x = event.x
-        self._y = event.y
+        self._x = self._xp = event.x
+        self._y = self._yp = event.y
     
     def rightClick(self, event):
         self._x = event.x
@@ -2182,7 +2185,7 @@ class CNCCanvas(GLCanvas):
     def midRelease(self, event):
         # If there was no pan (just mid-click), and the user clicked on a path, 
         # change the rotation center to the closest point of that line to the point where the user clicked
-        if self._mouseAction != ACTION_PAN:
+        if self._mouseAction != ACTION_PAN and self._mouseAction != ACTION_ZOOM:
             newRotationCenter, pointType = self.snapPoint(vec2(event.x, event.y))
 
             if newRotationCenter is not None:
@@ -2446,6 +2449,19 @@ class CNCCanvas(GLCanvas):
             wheel_step = 1
 
         self.zoomCanvas(event.x, event.y, pow(ZOOM, (event.delta // wheel_step)))
+    
+    # ----------------------------------------------------------------------
+    # Zoom in/out with shift+midbutton
+    # ----------------------------------------------------------------------
+    def midZoom(self, event):
+        if self._mouseAction != ACTION_ZOOM:
+            self.configure(cursor=mouseCursor(ACTION_ZOOM))
+            self._mouseAction = ACTION_ZOOM
+
+        self.zoomCanvas(self._xp, self._yp, pow(1.01, self._y - event.y))
+        
+        self._x = event.x
+        self._y = event.y
 
     # ----------------------------------------------------------------------
     # Change the insert marker location
