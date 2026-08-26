@@ -8,6 +8,7 @@ import os
 import socket
 import sys
 import time
+from tkinter.ttk import Notebook
 import traceback
 import webbrowser
 from datetime import datetime
@@ -49,6 +50,8 @@ from tkinter import (
     PanedWindow,
     messagebox,
 )
+
+from bCNC import SimCanvas
 
 try:
     import serial
@@ -232,11 +235,30 @@ class Application(Tk, Sender):
         frame = Frame(self.paned)
         self.paned.add(frame)
 
-        # --- Canvas ---
-        self.canvasFrame = CNCCanvas.CanvasFrame(frame, self)
+        # --- Canvas notebook ---
+        notebook = Notebook(frame)
+        notebook.pack(side=TOP, fill=BOTH, expand=YES)
+        
+        # First tab
+        tab1 = Frame(notebook)
+        notebook.add(tab1, text="3d Viewport")
+        # Second tab
+        tab2 = Frame(notebook)
+        notebook.add(tab2, text="Simulation")
+
+        # --- 3D Canvas ---
+        self.canvasFrame = CNCCanvas.CanvasFrame(tab1, self)
         self.canvasFrame.pack(side=TOP, fill=BOTH, expand=YES)
+
         # XXX FIXME do I need the self.canvas?
         self.canvas = self.canvasFrame.canvas
+
+        # --- Simulation Canvas ---
+        # Need to select tab2 before initializing SimCanvas, otherwise, it crashes
+        notebook.select(tab2)
+        self.simCanvas = SimCanvas.SimCanvasFrame(tab2, self)
+        self.simCanvas.pack(side=TOP, fill=BOTH, expand=YES)
+        notebook.select(tab1)
 
         # fist create Pages
         self.pages = {}
