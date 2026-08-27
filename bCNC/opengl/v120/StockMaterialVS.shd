@@ -1,0 +1,22 @@
+#version 120
+
+attribute vec2 pos; // Normalized values from 0.0 - 1.0
+
+uniform mat4 MVP;
+uniform vec2 bottomleft;
+uniform vec2 size;
+
+varying vec3 normal_;
+varying float height;
+
+void main() {
+    float x = bottomleft.x + pos.x * size.x;
+    float y = bottomleft.y + pos.y * size.y;
+    float z = (sin(pos.x * 60.) + sin(pos.y * 60.)) * 10;
+
+    gl_Position = MVP * vec4(x, y, z, 1.);
+
+    normal_ = normalize(vec3(10.*cos(pos.x * 60), 10.*cos(pos.y * 60), -1.));
+
+    height = z;
+}
