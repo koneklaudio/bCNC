@@ -1,6 +1,7 @@
 import math
 import time
 import sys
+from glm import pi
 from numpy import deg2rad
 from tkinter_gl import GLCanvas
 
@@ -12,7 +13,7 @@ if sys.platform == 'linux':
 
 from OpenGL.GL import *
 from ctypes import c_void_p
-from pyglm.glm import mat4x4, mat3x3, ortho, identity, value_ptr, inverse, translate, rotate, vec2, vec3, vec4, inverse, normalize, lookAt, dot, cross, distance, length2
+from pyglm.glm import mat4x4, mat3x3, ortho, identity, value_ptr, inverse, translate, rotate, vec2, vec3, vec4, inverse, normalize, lookAt, dot, cross, distance, length2, sin, cos
 import os
 
 from tkinter import (
@@ -49,7 +50,9 @@ from tkinter import (
     Radiobutton,
     Scrollbar,
     OptionMenu,
-    Toplevel
+    Toplevel,
+    LabelFrame,
+    messagebox
 )
 import tkinter
 
@@ -100,6 +103,15 @@ MOUSE_CURSOR = {
     ACTION_ZOOM: "circle"
 }
 
+HEIGHTMAP_RES = 10000
+MESH_RES = 1000
+STOCK_MIN_X = 0
+STOCK_MAX_X = 100
+STOCK_MIN_Y = 0
+STOCK_MAX_Y = 100
+STOCK_MIN_Z = 0.
+STOCK_MAX_Z = 20.
+
 def mouseCursor(action):
     return MOUSE_CURSOR.get(action, DEF_CURSOR)
 
@@ -113,6 +125,7 @@ class SimCanvas(GLCanvas):
         profile = 'legacy'
 
         self.app = app
+        self.cncCanvas = app.canvas
 
         self.windowing_system = self.app.call('tk', 'windowingsystem')
 
@@ -139,7 +152,12 @@ class SimCanvas(GLCanvas):
         self.__tzoom = 1.0  # delayed zoom (temporary)
         self.zoom = 1.
 
+        self._gl_initialized = False
+
+        self._make_current()
         self.initGL()
+
+        self._gl_initialized = True
     
     def rgb8(self, colorName):
         return (numpy.array(self.winfo_rgb(colorName)) * 255. / 65535.).astype(int)
@@ -323,7 +341,10 @@ class SimCanvas(GLCanvas):
         self.after('idle', self.draw)
     
     def draw(self):
-        self.make_current()
+        if not self._gl_initialized:
+            return
+        
+        self._make_current()
         width, height = self.winfo_width(), self.winfo_height()
         
         # Check readiness of the buffer
@@ -348,7 +369,12 @@ class SimCanvas(GLCanvas):
         glClear(GL_DEPTH_BUFFER_BIT)
 
         # Draw stock material
-        self.drawStockMaterial()
+        self.drawStockTop()
+        self.drawStockBottom()
+        self.drawStockSide(1)
+        self.drawStockSide(2)
+        self.drawStockSide(3)
+        self.drawStockSide(4)
 
         glUseProgram(0)
         
@@ -387,6 +413,86 @@ class SimCanvas(GLCanvas):
         return shader_program
 
     def initGL(self):
+        self._make_current()
+        # Create textures (height map) and framebuffers for milling simulation.
+        # The MillFS fragment shader reads the mapheight from FBO 0, writes changes to FBO 1, and then that area is copied back to FBO 0.
+        self.textures = glGenTextures(2)
+        self.fbos = glGenFramebuffers(2)
+
+        for i in range(2):
+            glBindTexture(
+                GL_TEXTURE_2D,
+                self.textures[i]
+            )
+
+            glTexParameteri(
+                GL_TEXTURE_2D,
+                GL_TEXTURE_MIN_FILTER,
+                GL_LINEAR
+            )
+
+            glTexParameteri(
+                GL_TEXTURE_2D,
+                GL_TEXTURE_MAG_FILTER,
+                GL_LINEAR
+            )
+
+            glTexParameteri(
+                GL_TEXTURE_2D,
+                GL_TEXTURE_WRAP_S,
+                GL_CLAMP_TO_EDGE
+            )
+
+            glTexParameteri(
+                GL_TEXTURE_2D,
+                GL_TEXTURE_WRAP_T,
+                GL_CLAMP_TO_EDGE
+            )
+
+            # One-channel 32-bit floating point height.
+            glTexImage2D(
+                GL_TEXTURE_2D,
+                0,
+                GL_R32F,
+                HEIGHTMAP_RES,
+                HEIGHTMAP_RES,
+                0,
+                GL_RED,
+                GL_FLOAT,
+                None
+            )
+
+            glBindFramebuffer(
+                GL_FRAMEBUFFER,
+                self.fbos[i]
+            )
+
+            glFramebufferTexture2D(
+                GL_FRAMEBUFFER,
+                GL_COLOR_ATTACHMENT0,
+                GL_TEXTURE_2D,
+                self.textures[i],
+                0
+            )
+
+            glDrawBuffers([GL_COLOR_ATTACHMENT0])
+
+            status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
+
+            if status != GL_FRAMEBUFFER_COMPLETE:
+                raise RuntimeError(
+                    "Height FBO {} incomplete: {}".format(
+                        i,
+                        hex(status)
+                    )
+                )
+
+        glBindTexture(GL_TEXTURE_2D, 0)
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0)
+
+        self.reset()
+
         # Create all the OpenGL shader programs
 
         # ----- BACKGROUND PROGRAM ------
@@ -403,8 +509,7 @@ class SimCanvas(GLCanvas):
         # Create a Vertex Buffer Object (VBO)
         self.backgroundVBO = glGenBuffers(1)
 
-        # Since the background is fixed, we set the buffer data here
-        glUseProgram(self.backgroundProgram)      
+        # Since the background is fixed, we set the buffer data here   
         glBindBuffer(GL_ARRAY_BUFFER, self.backgroundVBO)
         
         vertices = numpy.array([1, 2, 3, 1, 3, 4], dtype=numpy.float32)
@@ -413,7 +518,27 @@ class SimCanvas(GLCanvas):
         
         glBindBuffer(GL_ARRAY_BUFFER, 0)
 
-        # ----- STOCK MATERIAL PROGRAM ------
+        # ----- MILLING PROGRAM ------
+        # Vertex Shader code
+        with open(CNCCanvas.openglFolder + "MillVS.shd", "r") as file:
+            MillVSCode = file.read()
+
+        # Fragment Shader code
+        with open(CNCCanvas.openglFolder + "MillFS.shd", "r") as file:
+            MillFSCode = file.read()
+
+        self.millProgram = self.createProgram(MillVSCode, MillFSCode)
+
+        # Create a Vertex Buffer Object (VBO)
+        self.millVBO = glGenBuffers(1)
+
+        # We create the fixed fullscreen triangle for the milling texture rendering
+        vertices = numpy.array([-1, -1, 3, -1, -1, 3], dtype=numpy.float32)
+        glBindBuffer(GL_ARRAY_BUFFER, self.millVBO)
+        glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_STATIC_DRAW)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+        # ----- STOCK TOP PROGRAM ------
         # Vertex Shader code
         with open(CNCCanvas.openglFolder + "StockMaterialVS.shd", "r") as file:
             StockMaterialVSCode = file.read()
@@ -422,21 +547,90 @@ class SimCanvas(GLCanvas):
         with open(CNCCanvas.openglFolder + "StockMaterialFS.shd", "r") as file:
             StockMaterialFSCode = file.read()
 
-        self.stockMaterialProgram = self.createProgram(StockMaterialVSCode, StockMaterialFSCode)
+        self.stockTopProgram = self.createProgram(StockMaterialVSCode, StockMaterialFSCode)
 
         # Create a Vertex Buffer Object (VBO)
-        self.stockMaterialVBO = glGenBuffers(1)
+        self.stockTopVBO = glGenBuffers(1)
 
         # Create an Element Buffer Object (EBO)
-        self.stockMaterialEBO = glGenBuffers(1)
+        self.stockTopEBO = glGenBuffers(1)
 
         # Create the stock material vertices and indices
-        self.updateStockMaterialBuffers(1000, 1000)
+        self.updateStockMaterialBuffers(MESH_RES, MESH_RES)
+
+        # ----- STOCK BOTTOM PROGRAM ------
+        # Vertex Shader code
+        with open(CNCCanvas.openglFolder + "StockBottomVS.shd", "r") as file:
+            StockBottomVSCode = file.read()
+
+        # Fragment Shader code
+        with open(CNCCanvas.openglFolder + "StockBottomFS.shd", "r") as file:
+            StockBottomFSCode = file.read()
+
+        self.stockBottomProgram = self.createProgram(StockBottomVSCode, StockBottomFSCode)
+
+        # Create a Vertex Buffer Object (VBO)
+        self.stockBottomVBO = glGenBuffers(1)
+
+        # Create the stock bottom vertex indices
+        indices = numpy.array([1, 2, 3, 1, 3, 4], dtype=numpy.float32)
+              
+        glBindBuffer(GL_ARRAY_BUFFER, self.stockBottomVBO)     
+        glBufferData(GL_ARRAY_BUFFER, indices.nbytes, indices, GL_STATIC_DRAW)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+        # ----- STOCK SIDE PROGRAM ------
+        # Vertex Shader code
+        with open(CNCCanvas.openglFolder + "StockSideVS.shd", "r") as file:
+            StockSideVSCode = file.read()
+
+        # Fragment Shader code
+        with open(CNCCanvas.openglFolder + "StockSideFS.shd", "r") as file:
+            StockSideFSCode = file.read()
+
+        self.stockSideProgram = self.createProgram(StockSideVSCode, StockSideFSCode)
+
+        # Create a Vertex Buffer Object (VBO)
+        self.stockSideVBO = glGenBuffers(1)
+
+        # Create the stock side vertex indices
+        indices = numpy.array([1, 2, 3, 1, 3, 4], dtype=numpy.float32)
+              
+        glBindBuffer(GL_ARRAY_BUFFER, self.stockSideVBO)     
+        glBufferData(GL_ARRAY_BUFFER, indices.nbytes, indices, GL_STATIC_DRAW)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+    def _make_current(self):
+        #self.update_idletasks()
+        if self.app.openglContext == self:
+            return
         
-        # Create the height map
-        self.updateHeightMap(10000, 10000)
+        self.app.openglContext = self
+        self.make_current()
+
+        if glGetString(GL_VERSION) is None:
+            raise RuntimeError(
+                "SimCanvas: OpenGL context not available"
+            )
+    
+    def reset(self):
+        self._make_current()
+
+        glDisable(GL_SCISSOR_TEST)
+        
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, self.fbos[0])
+
+        glViewport(0, 0, HEIGHTMAP_RES, HEIGHTMAP_RES)
+
+        glClearBufferfv(GL_COLOR, 0, [STOCK_MAX_Z, 0.0, 0.0, 0.0])
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0)
+
+        self.queueDraw()
 
     def drawBackground(self):
+        self._make_current()
+
         glUseProgram(self.backgroundProgram)
         glBindBuffer(GL_ARRAY_BUFFER, self.backgroundVBO)
         PARAMETERS_PER_VERTEX = 1
@@ -453,36 +647,189 @@ class SimCanvas(GLCanvas):
 
         glDrawArrays(GL_TRIANGLES, 0, 6)
 
-    def drawStockMaterial(self):
-        glUseProgram(self.stockMaterialProgram)
-        glBindBuffer(GL_ARRAY_BUFFER, self.stockMaterialVBO)
+    def drawStockTop(self):
+        self._make_current()
+
+        glUseProgram(self.stockTopProgram)
+        glBindBuffer(GL_ARRAY_BUFFER, self.stockTopVBO)
         PARAMETERS_PER_VERTEX = 2
-        glVertexAttribPointer(glGetAttribLocation(self.stockMaterialProgram, "pos"), 2, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(0*4))
-        glEnableVertexAttribArray(glGetAttribLocation(self.stockMaterialProgram, "pos"))
+        glVertexAttribPointer(glGetAttribLocation(self.stockTopProgram, "uv"), 2, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(0*4))
+        glEnableVertexAttribArray(glGetAttribLocation(self.stockTopProgram, "uv"))
 
         MVP = self.PMatrix * self.MVMatrix
-        mv_loc = glGetUniformLocation(program=self.stockMaterialProgram, name="MVP")
+        mv_loc = glGetUniformLocation(program=self.stockTopProgram, name="MVP")
         glUniformMatrix4fv(mv_loc, 1, False, value_ptr(MVP))
 
-        bottomleft = vec2(-100, -100)
-        bottomleft_loc = glGetUniformLocation(program=self.stockMaterialProgram, name="bottomleft")
-        glUniform2fv(bottomleft_loc, 1, value_ptr(bottomleft))
+        glActiveTexture(GL_TEXTURE0)
 
-        size = vec2(200, 200)
-        size_loc = glGetUniformLocation(program=self.stockMaterialProgram, name="size")
-        glUniform2fv(size_loc, 1, value_ptr(size))
+        glBindTexture(GL_TEXTURE_2D, self.textures[0])
+
+        glUniform1i(glGetUniformLocation(self.stockTopProgram, "heightMap"), 0)
+
+        glUniform3f(glGetUniformLocation(self.stockTopProgram, "stockMin"), STOCK_MIN_X, STOCK_MIN_Y, STOCK_MIN_Z)
+        glUniform3f(glGetUniformLocation(self.stockTopProgram, "stockMax"), STOCK_MAX_X, STOCK_MAX_Y, STOCK_MAX_Z)
+        glUniform1f(glGetUniformLocation(self.stockTopProgram, "meshResolution"), MESH_RES)
+
+        uvmin, uvmax = self.getStockVisibleArea()
+        glUniform2f(glGetUniformLocation(self.stockTopProgram, "uvmin"), uvmin.x, uvmin.y)
+        glUniform2f(glGetUniformLocation(self.stockTopProgram, "uvmax"), uvmax.x, uvmax.y)
 
         light1dir = normalize(inverse(MVP) * vec4(1.0, -0.25, -1.0, 0)).xyz
         light2dir = normalize(inverse(MVP) * vec4(-0.5, -0.125, -0.5, 0)).xyz
         
-        light1dir_loc = glGetUniformLocation(program=self.stockMaterialProgram, name="light1dir")
-        glUniform3fv(light1dir_loc, 1, value_ptr(light1dir))
-        light2dir_loc = glGetUniformLocation(program=self.stockMaterialProgram, name="light2dir")
-        glUniform3fv(light2dir_loc, 1, value_ptr(light2dir))
+        glUniform3fv(glGetUniformLocation(program=self.stockTopProgram, name="light1dir"), 1, value_ptr(light1dir))
+        glUniform3fv(glGetUniformLocation(program=self.stockTopProgram, name="light2dir"), 1, value_ptr(light2dir))
 
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.stockMaterialEBO)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.stockTopEBO)
         size = glGetBufferParameteriv(GL_ELEMENT_ARRAY_BUFFER, GL_BUFFER_SIZE) // 4
         glDrawElements(GL_TRIANGLES, size, GL_UNSIGNED_INT, None)
+    
+    def drawStockBottom(self):
+        self._make_current()
+
+        glUseProgram(self.stockBottomProgram)
+        glBindBuffer(GL_ARRAY_BUFFER, self.stockBottomVBO)
+        PARAMETERS_PER_VERTEX = 1
+        glVertexAttribPointer(glGetAttribLocation(self.stockBottomProgram, "index"), 1, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(0*4))
+        glEnableVertexAttribArray(glGetAttribLocation(self.stockBottomProgram, "index"))
+
+        MVP = self.PMatrix * self.MVMatrix
+        mv_loc = glGetUniformLocation(program=self.stockBottomProgram, name="MVP")
+        glUniformMatrix4fv(mv_loc, 1, False, value_ptr(MVP))
+
+        glActiveTexture(GL_TEXTURE0)
+
+        glBindTexture(GL_TEXTURE_2D, self.textures[0])
+
+        glUniform1i(glGetUniformLocation(self.stockBottomProgram, "heightMap"), 0)
+
+        glUniform3f(glGetUniformLocation(self.stockBottomProgram, "stockMin"), STOCK_MIN_X, STOCK_MIN_Y, STOCK_MIN_Z)
+        glUniform3f(glGetUniformLocation(self.stockBottomProgram, "stockMax"), STOCK_MAX_X, STOCK_MAX_Y, STOCK_MAX_Z)
+
+        light1dir = normalize(inverse(MVP) * vec4(1.0, -0.25, -1.0, 0)).xyz
+        light2dir = normalize(inverse(MVP) * vec4(-0.5, -0.125, -0.5, 0)).xyz
+        
+        glUniform3fv(glGetUniformLocation(program=self.stockBottomProgram, name="light1dir"), 1, value_ptr(light1dir))
+        glUniform3fv(glGetUniformLocation(program=self.stockBottomProgram, name="light2dir"), 1, value_ptr(light2dir))
+
+        glDrawArrays(GL_TRIANGLES, 0, 6)
+    
+    def drawStockSide(self, side: int):
+        # Side -> 1: up, 2: down, 3: left, 4: right
+        # p1 and p2 -> vertices of the side surface
+
+        self._make_current()
+
+        glUseProgram(self.stockSideProgram)
+        glBindBuffer(GL_ARRAY_BUFFER, self.stockSideVBO)
+        PARAMETERS_PER_VERTEX = 1
+        glVertexAttribPointer(glGetAttribLocation(self.stockSideProgram, "index"), 1, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(0*4))
+        glEnableVertexAttribArray(glGetAttribLocation(self.stockSideProgram, "index"))
+
+        MVP = self.PMatrix * self.MVMatrix
+        mv_loc = glGetUniformLocation(program=self.stockSideProgram, name="MVP")
+        glUniformMatrix4fv(mv_loc, 1, False, value_ptr(MVP))
+
+        glActiveTexture(GL_TEXTURE0)
+
+        glBindTexture(GL_TEXTURE_2D, self.textures[0])
+
+        glUniform1i(glGetUniformLocation(self.stockSideProgram, "heightMap"), 0)
+
+        glUniform1f(glGetUniformLocation(self.stockSideProgram, "side"), float(side))
+
+        if side == 1:
+            p1 = vec3(STOCK_MIN_X, STOCK_MAX_Y, STOCK_MIN_Z)
+            p2 = vec3(STOCK_MAX_X, STOCK_MAX_Y, STOCK_MAX_Z)
+        elif side == 2:
+            p1 = vec3(STOCK_MIN_X, STOCK_MIN_Y, STOCK_MIN_Z)
+            p2 = vec3(STOCK_MAX_X, STOCK_MIN_Y, STOCK_MAX_Z)
+        if side == 3:
+            p1 = vec3(STOCK_MIN_X, STOCK_MIN_Y, STOCK_MIN_Z)
+            p2 = vec3(STOCK_MIN_X, STOCK_MAX_Y, STOCK_MAX_Z)
+        elif side == 4:
+            p1 = vec3(STOCK_MAX_X, STOCK_MIN_Y, STOCK_MIN_Z)
+            p2 = vec3(STOCK_MAX_X, STOCK_MAX_Y, STOCK_MAX_Z)
+        else:
+            return
+
+        glUniform3f(glGetUniformLocation(self.stockSideProgram, "p1"), p1.x, p1.y, p1.z)
+        glUniform3f(glGetUniformLocation(self.stockSideProgram, "p2"), p2.x, p2.y, p2.z)
+
+        light1dir = normalize(inverse(MVP) * vec4(1.0, -0.25, -1.0, 0)).xyz
+        light2dir = normalize(inverse(MVP) * vec4(-0.5, -0.125, -0.5, 0)).xyz
+        
+        glUniform3fv(glGetUniformLocation(program=self.stockSideProgram, name="light1dir"), 1, value_ptr(light1dir))
+        glUniform3fv(glGetUniformLocation(program=self.stockSideProgram, name="light2dir"), 1, value_ptr(light2dir))
+
+        glDrawArrays(GL_TRIANGLES, 0, 6)
+    
+    def getStockVisibleArea(self):
+        if self.viewAngle(vec3(0, 0, 1)) == 90:
+            return vec2(0, 0), vec2(1, 1)
+        
+        # Project the 4 corners of the canvas to the stock upper surface
+        bl_up = self.canvas2WorldPlane(vec2(-1, -1), vec3(0, 0, 1), vec3(0, 0, STOCK_MAX_Z), 0)
+        br_up = self.canvas2WorldPlane(vec2(1, -1), vec3(0, 0, 1), vec3(0, 0, STOCK_MAX_Z), 0)
+        ul_up = self.canvas2WorldPlane(vec2(-1, 1), vec3(0, 0, 1), vec3(0, 0, STOCK_MAX_Z), 0)
+        ur_up = self.canvas2WorldPlane(vec2(1, 1), vec3(0, 0, 1), vec3(0, 0, STOCK_MAX_Z), 0)
+
+        # Project the 4 corners of the canvas to the stock lower surface
+        bl_lo = self.canvas2WorldPlane(vec2(-1, -1), vec3(0, 0, 1), vec3(0, 0, STOCK_MIN_Z), 0)
+        br_lo = self.canvas2WorldPlane(vec2(1, -1), vec3(0, 0, 1), vec3(0, 0, STOCK_MIN_Z), 0)
+        ul_lo = self.canvas2WorldPlane(vec2(-1, 1), vec3(0, 0, 1), vec3(0, 0, STOCK_MIN_Z), 0)
+        ur_lo = self.canvas2WorldPlane(vec2(1, 1), vec3(0, 0, 1), vec3(0, 0, STOCK_MIN_Z), 0)
+
+        xmin = min(bl_up.x, br_up.x, ul_up.x, ur_up.x, bl_lo.x, br_lo.x, ul_lo.x, ur_lo.x)
+        xmax = max(bl_up.x, br_up.x, ul_up.x, ur_up.x, bl_lo.x, br_lo.x, ul_lo.x, ur_lo.x)
+        ymin = min(bl_up.y, br_up.y, ul_up.y, ur_up.y, bl_lo.y, br_lo.y, ul_lo.y, ur_lo.y)
+        ymax = max(bl_up.y, br_up.y, ul_up.y, ur_up.y, bl_lo.y, br_lo.y, ul_lo.y, ur_lo.y)
+
+        uvminx = max(0, (xmin - STOCK_MIN_X) / (STOCK_MAX_X - STOCK_MIN_X))
+        uvmaxx = min(1, (xmax - STOCK_MIN_X) / (STOCK_MAX_X - STOCK_MIN_X))
+        uvminy = max(0, (ymin - STOCK_MIN_Y) / (STOCK_MAX_Y - STOCK_MIN_Y))
+        uvmaxy = min(1, (ymax - STOCK_MIN_Y) / (STOCK_MAX_Y - STOCK_MIN_Y))
+
+        return vec2(uvminx, uvminy), vec2(uvmaxx, uvmaxy)
+    
+    def viewAngle(self, planeNormal : vec3) -> float:
+        """
+        Return the angle between the current view and a specific plane normal in 3D
+        """
+
+        MVPinv = inverse(self.PMatrix * self.MVMatrix)
+
+        # We define a line perpendicular to the canvas
+        p1 = (MVPinv * vec4(0, 0, 0, 1)).xyz
+        p2 = (MVPinv * vec4(0, 0, 1, 1)).xyz
+
+        v12 = p2 - p1
+
+        return numpy.rad2deg(numpy.arccos(abs(dot(normalize(v12), planeNormal))))
+
+    def canvas2WorldPlane(self, coords_uv: vec2, planeNormal : vec3, planePoint : vec3, thresholdAngle = 20.): # -> vec3 | None:
+        # return the intersection of a vector perpendicular to the screen, at uv coordinates in the canvas (-1 -> 1), with a plane in world coordinates
+
+        MVPinv = inverse(self.PMatrix * self.MVMatrix)
+
+        # We define a line perpendicular to the canvas
+        p1 = (MVPinv * vec4(coords_uv, 0, 1)).xyz
+        p2 = (MVPinv * vec4(coords_uv, 1, 1)).xyz
+        
+        v12 = p2 - p1
+
+        # If we are too parallel to the plane, return None
+        angle = 90 - numpy.rad2deg(numpy.arccos(abs(dot(normalize(v12), planeNormal))))
+        if angle == 0 or angle < abs(thresholdAngle):
+            return None
+
+        n = normalize(planeNormal)
+        denom = dot(n, v12)
+        t = dot(n, planePoint - p1) / denom
+
+        intersection = p1 + v12 * t
+
+        return intersection
     
     def updateStockMaterialBuffers(self, nx, ny):
         # Vertices (normalized from 0. to 1.)
@@ -491,8 +838,10 @@ class SimCanvas(GLCanvas):
         xval /= nx - 1
         yval /= ny - 1
         vertices = numpy.stack([xval.T.ravel(), yval.T.ravel()], axis=1)
+
+        self._make_current()
               
-        glBindBuffer(GL_ARRAY_BUFFER, self.stockMaterialVBO)     
+        glBindBuffer(GL_ARRAY_BUFFER, self.stockTopVBO)     
         glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_STATIC_DRAW)
         glBindBuffer(GL_ARRAY_BUFFER, 0)
 
@@ -513,61 +862,248 @@ class SimCanvas(GLCanvas):
             bl, tr, tl
         ], axis=-1).ravel()
 
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.stockMaterialEBO)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.stockTopEBO)
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.nbytes, indices, GL_STATIC_DRAW)
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0)
+    
+    def millSegment(self, p1: vec3, p2: vec3, toolType: int, diameter: float):
+        """
+        Single-pass, scissored milling update.
 
-    def updateHeightMap(self, nx, ny):
-        # Texture with a resolution of (nx, ny), to store the height of the stock material upper surface during milling
-        pass
+        The fragment shader reads the source height texture and writes
+        the complete destination value for every pixel in the scissor
+        rectangle. Pixels outside the actual cutter footprint simply
+        write oldHeight unchanged.
+        """
+        self._make_current()
 
+        # Cutter bounding box in workpiece coordinates.
+        min_x = max(STOCK_MIN_X, min(p1.x - diameter / 2., p2.x - diameter / 2))
+        max_x = min(STOCK_MAX_X, max(p1.x + diameter / 2., p2.x + diameter / 2))
+        min_y = max(STOCK_MIN_Y, min(p1.y - diameter / 2., p2.y - diameter / 2))
+        max_y = min(STOCK_MAX_Y, max(p1.y + diameter / 2., p2.y + diameter / 2))
+
+        if min_x >= max_x or min_y >= max_y:
+            return
+
+        work_w = STOCK_MAX_X - STOCK_MIN_X
+        work_h = STOCK_MAX_Y - STOCK_MIN_Y
+
+        # Convert physical XY to texture/framebuffer pixels.
+        sx0 = int(math.floor((min_x - STOCK_MIN_X) / work_w * HEIGHTMAP_RES))
+        sx1 = int(math.ceil((max_x - STOCK_MIN_X) / work_w * HEIGHTMAP_RES))
+
+        sy0 = int(math.floor((min_y - STOCK_MIN_Y) / work_h * HEIGHTMAP_RES))
+        sy1 = int(math.ceil((max_y - STOCK_MIN_Y) / work_h * HEIGHTMAP_RES))
+
+        sx0 = max(0, min(HEIGHTMAP_RES - 1, sx0))
+        sy0 = max(0, min(HEIGHTMAP_RES - 1, sy0))
+        sx1 = max(sx0 + 1, min(HEIGHTMAP_RES, sx1))
+        sy1 = max(sy0 + 1, min(HEIGHTMAP_RES, sy1))
+
+        width = sx1 - sx0
+        height = sy1 - sy0
+
+        # Destination FBO.
+        glBindFramebuffer(GL_FRAMEBUFFER, self.fbos[1])
+
+        glDrawBuffer(GL_COLOR_ATTACHMENT0)
+
+        glViewport(0, 0, HEIGHTMAP_RES, HEIGHTMAP_RES)
+
+        # Rasterization is restricted to the cutter's bounding box.
+        glEnable(GL_SCISSOR_TEST)
+        glScissor(sx0, sy0, width, height)
+
+        glDisable(GL_DEPTH_TEST)
+        glDisable(GL_BLEND)
+        glDisable(GL_CULL_FACE)
+
+        glUseProgram(self.millProgram)
+
+        # Source height map.
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D, self.textures[0])
+
+        glBindBuffer(GL_ARRAY_BUFFER, self.millVBO)
+        PARAMETERS_PER_VERTEX = 2
+        glVertexAttribPointer(glGetAttribLocation(self.millProgram, "pos"), 2, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(0*4))
+        glEnableVertexAttribArray(glGetAttribLocation(self.millProgram, "pos"))
+
+        glUniform1i(glGetUniformLocation(self.millProgram, "heightMap"), 0)
+        glUniform3f(glGetUniformLocation(self.millProgram, "pA"), p1.x, p1.y, p1.z)
+        glUniform3f(glGetUniformLocation(self.millProgram, "pB"), p2.x, p2.y, p2.z)
+        glUniform1f(glGetUniformLocation(self.millProgram, "toolRadius"), diameter / 2.)
+        glUniform1i(glGetUniformLocation(self.millProgram, "toolType"), toolType) # TODO: tool type as argument
+        glUniform2f(glGetUniformLocation(self.millProgram, "workMin"), STOCK_MIN_X, STOCK_MIN_Y)
+        glUniform2f(glGetUniformLocation(self.millProgram, "workMax"), STOCK_MAX_X, STOCK_MAX_Y)
+
+        glDrawArrays(GL_TRIANGLES, 0, 3)
+
+        glUseProgram(0)
+        glDisable(GL_SCISSOR_TEST)
+
+        # Copy the milled region to the source framebuffer
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, self.fbos[1])
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, self.fbos[0])
+
+        glBlitFramebuffer(
+            sx0, sy0,
+            sx1, sy1,
+            sx0, sy0,
+            sx1, sy1,
+            GL_COLOR_BUFFER_BIT,
+            GL_NEAREST
+        )
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0)
+
+    def millExample(self):
+        self.reset()
+
+        lines16 = numpy.reshape(self.cncCanvas.pathVertices, (-1, 16))
+
+        for line in lines16:
+            p1 = vec3(line[1:4])
+            p2 = vec3(line[9:12])
+        
+            self.millSegment(p1, p2, 1, 6)
+        self.queueDraw()
 
 class SimCanvasFrame(Frame):
     def __init__(self, master, app, *kw, **kwargs):
         Frame.__init__(self, master, *kw, **kwargs)
         self.app = app
 
-        self.draw_axes = BooleanVar()
-        self.draw_grid = BooleanVar()
-        self.draw_margin = BooleanVar()
-        self.draw_probe = BooleanVar()
-        self.draw_paths = BooleanVar()
-        self.draw_rapid = BooleanVar()
-        self.draw_workarea = BooleanVar()
-        self.draw_camera = BooleanVar()
         self.view = StringVar()
 
         toolbar = Frame(self, relief=RAISED)
-        toolbar.grid(row=0, column=0, sticky=EW)
+        toolbar.pack(side='top', fill='x')
 
         # Ensure the Frame exists at the OS level before OpenGL initializes
         self.pack(side='top', fill='both', expand=True)
         self.update()
 
+        # --- SIM Canvas ---
         self.canvas = SimCanvas(self, app, takefocus=True, background="White")
-        self.canvas.grid(row=1, column=0, sticky=NSEW)
+
+        # --- SIM Panel ---
+
+        simPanel = Frame(self, width=200)
+        simPanel.pack(side='left', fill='y')
+        simPanel.pack_propagate(False)
+
+        lframe = LabelFrame(simPanel, text=_("Stock dimensions"), foreground="DarkBlue")
+        lframe.pack(side='top', fill='x')
+
+        row, col = 0, 0
+        # Empty
+        col += 1
+        Label(lframe, text=_("Min")).grid(row=row, column=col, sticky=EW)
+        col += 1
+        Label(lframe, text=_("Max")).grid(row=row, column=col, sticky=EW)
+
+        # --- X ---
+        row += 1
+        col = 0
+        Label(lframe, text=_("X:")).grid(row=row, column=col, sticky=E)
+        col += 1
+        self.stockXmin = tkExtra.FloatEntry(lframe, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, width=5)
+        self.stockXmin.grid(row=row, column=col, sticky=EW)
+        tkExtra.Balloon.set(self.stockXmin, _("X minimum"))
+        self.addWidget(self.stockXmin)
+
+        col += 1
+        self.stockXmax = tkExtra.FloatEntry(lframe, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, width=5)
+        self.stockXmax.grid(row=row, column=col, sticky=EW)
+        tkExtra.Balloon.set(self.stockXmax, _("X maximum"))
+        self.addWidget(self.stockXmax)
+
+        # --- Y ---
+        row += 1
+        col = 0
+        Label(lframe, text=_("Y:")).grid(row=row, column=col, sticky=E)
+        col += 1
+        self.stockYmin = tkExtra.FloatEntry(lframe, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, width=5)
+        self.stockYmin.grid(row=row, column=col, sticky=EW)
+        tkExtra.Balloon.set(self.stockYmin, _("Y minimum"))
+        self.addWidget(self.stockYmin)
+
+        col += 1
+        self.stockYmax = tkExtra.FloatEntry(lframe, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, width=5)
+        self.stockYmax.grid(row=row, column=col, sticky=EW)
+        tkExtra.Balloon.set(self.stockYmax, _("Y maximum"))
+        self.addWidget(self.stockYmax)
+
+        # --- Z ---
+        row += 1
+        col = 0
+        Label(lframe, text=_("Z:")).grid(row=row, column=col, sticky=E)
+        col += 1
+        self.stockZmin = tkExtra.FloatEntry(lframe, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, width=5)
+        self.stockZmin.grid(row=row, column=col, sticky=EW)
+        tkExtra.Balloon.set(self.stockZmin, _("Z minimum"))
+        self.addWidget(self.stockZmin)
+
+        col += 1
+        self.stockZmax = tkExtra.FloatEntry(lframe, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, width=5)
+        self.stockZmax.grid(row=row, column=col, sticky=EW)
+        tkExtra.Balloon.set(self.stockZmax, _("Z maximum"))
+        self.addWidget(self.stockZmax)
+
+        # --- Refresh button ---
+        row += 1
+        col = 1
+        bRefresh = Button(lframe, text=_("Refresh"), compound=LEFT, command=self.updateStockSize, image=Utils.icons["refresh"], padx=2, pady=1)
+        bRefresh.grid(row=row, column=col, columnspan=2, sticky=EW)
+        self.addWidget(bRefresh)
+
+        lframe.grid_columnconfigure(1, weight=1)
+        lframe.grid_columnconfigure(2, weight=1)
+
+        # --- End Mill data ---
+
+        lframe = LabelFrame(simPanel, text=_("End Mill"), foreground="DarkBlue")
+        lframe.pack(side='top', fill='x', pady=10)
+
+        combo = tkExtra.Combobox(lframe, True, background=tkExtra.GLOBAL_CONTROL_BACKGROUND)
+        combo.fill(["Flat", "Ball"])
+        combo.set("Flat")
+        combo.pack(side='top', fill='x')
+        tkExtra.Balloon.set(combo, _("Type of End Mill"))
+
+        lineFrame = Frame(lframe)
+        lineFrame.pack(side='top', fill='x', pady=10)
+
+        Label(lineFrame, text=_("Diameter:")).pack(side='left')
+        self.millDiameter = tkExtra.FloatEntry(lineFrame, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, width=10)
+        self.millDiameter.pack(side='left', fill='x', expand=True, padx=5)
+        tkExtra.Balloon.set(self.millDiameter, _("Mill Diameter"))
+        self.addWidget(self.millDiameter)
+
+        # Pack the canvas
+        self.canvas.pack(side='top', fill='both', expand=True)
 
         self.createCanvasToolbar(toolbar)
 
-        self.grid_rowconfigure(1, weight=1)
-        self.grid_columnconfigure(0, weight=1)
+        self.loadConfig()
+        self.updateStockSize()
 
     # ----------------------------------------------------------------------
     def addWidget(self, widget):
         self.app.widgets.append(widget)
 
-
     # ----------------------------------------------------------------------
-    # Canvas toolbar FIXME XXX should be moved to CNCCanvas
+    # SimCanvas toolbar
     # ----------------------------------------------------------------------
     def createCanvasToolbar(self, toolbar):
-        # -----------
-        # Draw flags
-        # -----------
-        Label(toolbar, text=_("Draw:"),
-              compound=LEFT).pack(
-            side=LEFT  )
-        Button(toolbar, text="+", command=self.canvas.draw).pack(side=LEFT)
+        b = Button(toolbar, image=Utils.icons["reset"], command=self.canvas.reset)
+        b.pack(side=LEFT)
+        tkExtra.Balloon.set(b, _("Reset Stock"))
+
+        b = Button(toolbar, image=Utils.icons["start"], command=self.canvas.millExample)
+        b.pack(side=LEFT)
+        tkExtra.Balloon.set(b, _("Run simulation"))
 
     # ----------------------------------------------------------------------
     def redraw(self, event=None):
@@ -638,67 +1174,56 @@ class SimCanvasFrame(Frame):
     def viewISO3(self, event=None):
         self.view.set(VIEWS[VIEW_ISO3])
 
-    # ----------------------------------------------------------------------
-    def toggleDrawFlag(self):
-        self.canvas.draw_axes = self.draw_axes.get()
-        self.canvas.draw_grid = self.draw_grid.get()
-        self.canvas.draw_margin = self.draw_margin.get()
-        self.canvas.draw_probe = self.draw_probe.get()
-        self.canvas.draw_paths = self.draw_paths.get()
-        self.canvas.draw_rapid = self.draw_rapid.get()
-        self.canvas.draw_workarea = self.draw_workarea.get()
-        self.event_generate("<<ViewChange>>")
+    def loadConfig(self):
+        self.stockXmin.set(Utils.getFloat("Simulation", "xmin", STOCK_MIN_X))
+        self.stockXmax.set(Utils.getFloat("Simulation", "xmax", STOCK_MAX_X))
+        self.stockYmin.set(Utils.getFloat("Simulation", "ymin", STOCK_MIN_Y))
+        self.stockYmax.set(Utils.getFloat("Simulation", "ymax", STOCK_MAX_Y))
+        self.stockZmin.set(Utils.getFloat("Simulation", "zmin", STOCK_MIN_Z))
+        self.stockZmax.set(Utils.getFloat("Simulation", "zmax", STOCK_MAX_Z))
 
-    # ----------------------------------------------------------------------
-    def drawAxes(self, value=None):
-        if value is not None:
-            self.draw_axes.set(value)
-        self.canvas.draw_axes = self.draw_axes.get()
-        self.canvas.queueDraw()
+    def saveConfig(self):
+        Utils.addSection("Simulation")
 
-    # ----------------------------------------------------------------------
-    def drawGrid(self, value=None):
-        if value is not None:
-            self.draw_grid.set(value)
-        self.canvas.draw_grid = self.draw_grid.get()
-        self.canvas.updateGrid()
+        Utils.setFloat("Simulation", "xmin", self.stockXmin.get())
+        Utils.setFloat("Simulation", "xmax", self.stockXmax.get())
+        Utils.setFloat("Simulation", "ymin", self.stockYmin.get())
+        Utils.setFloat("Simulation", "ymax", self.stockYmax.get())
+        Utils.setFloat("Simulation", "zmin", self.stockZmin.get())
+        Utils.setFloat("Simulation", "zmax", self.stockZmax.get())
 
-    # ----------------------------------------------------------------------
-    def drawMargin(self, value=None):
-        if value is not None:
-            self.draw_margin.set(value)
-        self.canvas.draw_margin = self.draw_margin.get()
-        self.canvas.updateMargin()
-
-    # ----------------------------------------------------------------------
-    def drawProbe(self, value=None):
-        if value is not None:
-            self.draw_probe.set(value)
-        self.canvas.draw_probe = self.draw_probe.get()
-        self.canvas.drawProbe()
-
-    # ----------------------------------------------------------------------
-    def drawWorkarea(self, value=None):
-        if value is not None:
-            self.draw_workarea.set(value)
-        self.canvas.draw_workarea = self.draw_workarea.get()
-        self.canvas.updateWorkArea()
-
-    # ----------------------------------------------------------------------
-    def drawCamera(self, value=None):
-        if value is not None:
-            self.draw_camera.set(value)
-        if self.draw_camera.get():
-            self.canvas.cameraOn()
-        else:
-            self.canvas.cameraOff()
-            self.canvas.queueDraw()
-
-    # ----------------------------------------------------------------------
-    def drawTimeChange(self):
-        global DRAW_TIME
+    def updateStockSize(self):
         try:
-            DRAW_TIME = int(self.drawTime.get())
-        except ValueError:
-            DRAW_TIME = 5 * 60
-        self.viewChange()
+            xmin = float(self.stockXmin.get())
+            xmax = float(self.stockXmax.get())
+            ymin = float(self.stockYmin.get())
+            ymax = float(self.stockYmax.get())
+            zmin = float(self.stockZmin.get())
+            zmax = float(self.stockZmax.get())
+        except:
+            messagebox.showinfo("Warning", "Please fill in all the stock dimensions")
+            return
+        
+        if xmax <= xmin:
+            messagebox.showinfo("Warning", "Xmax must be greater than Xmin")
+            return
+        
+        if ymax <= ymin:
+            messagebox.showinfo("Warning", "Ymax must be greater than Ymin")
+            return
+        
+        if zmax <= zmin:
+            messagebox.showinfo("Warning", "Zmax must be greater than Zmin")
+            return
+        
+        global STOCK_MIN_X, STOCK_MAX_X, STOCK_MIN_Y, STOCK_MAX_Y, STOCK_MIN_Z, STOCK_MAX_Z
+
+        STOCK_MIN_X = xmin
+        STOCK_MAX_X = xmax
+        STOCK_MIN_Y = ymin
+        STOCK_MAX_Y = ymax
+        STOCK_MIN_Z = zmin
+        STOCK_MAX_Z = zmax
+
+        self.canvas.reset()
+

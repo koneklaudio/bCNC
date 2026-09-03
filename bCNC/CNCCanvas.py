@@ -370,6 +370,7 @@ class CNCCanvas(GLCanvas):
         # Print OpenGL version info
         print("========== OpenGL ==========")
         print("OpenGL version:", glGetString(GL_VERSION))
+        print("OpenGL renderer:", glGetString(GL_RENDERER))
         print("GLSL version:", glGetString(GL_SHADING_LANGUAGE_VERSION))
 
         try:
@@ -461,6 +462,7 @@ class CNCCanvas(GLCanvas):
 
         self.charTextureAtlas = numpy.array(image)
 
+        self._make_current()
         glBindTexture(GL_TEXTURE_2D, self.textTexture)
 
         # Set the texture parameters
@@ -485,6 +487,7 @@ class CNCCanvas(GLCanvas):
         return id
 
     def initGL(self):
+        self._make_current()
         # Create all the OpenGL shader programs
 
         # ----- BACKGROUND PROGRAM ------
@@ -883,7 +886,8 @@ class CNCCanvas(GLCanvas):
                 self._modelSize = math.sqrt(math.pow(maxX-minX, 2) + math.pow(maxY-minY, 2) + math.pow(maxZ-minZ, 2))
         
         vertices = numpy.array(vertexArray, dtype=numpy.float32)
-        
+
+        self._make_current()
         glBindBuffer(GL_ARRAY_BUFFER, buffer)
         glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_DYNAMIC_DRAW)
 
@@ -892,6 +896,7 @@ class CNCCanvas(GLCanvas):
         return vertices
     
     def vertices_to_buffer(self, vertices, buffer):
+        self._make_current()
         glBindBuffer(GL_ARRAY_BUFFER, buffer)
         glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_DYNAMIC_DRAW)
         glBindBuffer(GL_ARRAY_BUFFER, 0)  # Unbind the VBO
@@ -911,6 +916,7 @@ class CNCCanvas(GLCanvas):
         lines16[firstIndex:lastIndex, [5, 13]] = colorFloat
 
         if bufferToUpdate is not None:
+            self._make_current()
             glBindBuffer(GL_ARRAY_BUFFER, bufferToUpdate)
             glBufferSubData(GL_ARRAY_BUFFER, firstIndex * 16 * 4, (lastIndex - firstIndex) * 16 * 4, linesVertices[firstIndex * 16:])
             glBindBuffer(GL_ARRAY_BUFFER, 0)
@@ -996,7 +1002,8 @@ class CNCCanvas(GLCanvas):
             ])
         
         vertices = numpy.array(vertexArray, dtype=numpy.float32)
-        
+
+        self._make_current()
         glBindBuffer(GL_ARRAY_BUFFER, buffer)
         glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_DYNAMIC_DRAW)
 
@@ -1089,7 +1096,8 @@ class CNCCanvas(GLCanvas):
                 hOffset += self.charOffsetAndWidth[ord(text[ch])][1]
             
         textVertices = numpy.array(char_data, dtype=numpy.float32)
-        
+
+        self._make_current()
         glBindBuffer(GL_ARRAY_BUFFER, buffer)
         glBufferData(GL_ARRAY_BUFFER, textVertices.nbytes, textVertices, GL_DYNAMIC_DRAW)
 
@@ -1667,6 +1675,7 @@ class CNCCanvas(GLCanvas):
         lines16[mask, 9:12] += translation
 
         if bufferToUpdate:
+            self._make_current()
             glBindBuffer(GL_ARRAY_BUFFER, bufferToUpdate)
             glBufferSubData(GL_ARRAY_BUFFER, 0, linesVertices.nbytes, linesVertices)
             glBindBuffer(GL_ARRAY_BUFFER, 0)
@@ -2574,6 +2583,7 @@ class CNCCanvas(GLCanvas):
             linesArray16[mask, 15] = linesArray16[mask, 15].astype(int) | ((numpy.vectorize(lookup.get)(matched_keys)).astype(int) & flagsToModify)
         
             if bufferToUpdate:
+                self._make_current()
                 glBindBuffer(GL_ARRAY_BUFFER, bufferToUpdate)
                 glBufferSubData(GL_ARRAY_BUFFER, 0, linesVertices.nbytes, linesVertices)
                 glBindBuffer(GL_ARRAY_BUFFER, 0)
@@ -2596,6 +2606,7 @@ class CNCCanvas(GLCanvas):
         linesArray16[:, 15] = linesArray16[:, 15].astype(int) & ~FLAG_SELECTED
         
         if bufferToUpdate:
+            self._make_current()
             glBindBuffer(GL_ARRAY_BUFFER, bufferToUpdate)
             glBufferSubData(GL_ARRAY_BUFFER, 0, linesArray.nbytes, linesArray)
             glBindBuffer(GL_ARRAY_BUFFER, 0)
@@ -2761,6 +2772,7 @@ class CNCCanvas(GLCanvas):
 
         try:
             self.cameraImage = self.get_camera_image()
+            self._make_current()
             glActiveTexture(GL_TEXTURE0)
             glBindTexture(GL_TEXTURE_2D, self.cameraTexture)
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
@@ -2846,7 +2858,7 @@ class CNCCanvas(GLCanvas):
     # Parse and draw the file from the editor to g-code commands
     # ----------------------------------------------------------------------
     def draw(self):
-        self.make_current()
+        self._make_current()
         width, height = self.winfo_width(), self.winfo_height()
         
         # Check readiness of the buffer
@@ -2950,6 +2962,7 @@ class CNCCanvas(GLCanvas):
         self._drawRequested = False
 
     def drawBackground(self):
+        self._make_current()
         glUseProgram(self.backgroundProgram)
         glBindBuffer(GL_ARRAY_BUFFER, self.backgroundVBO)
         PARAMETERS_PER_VERTEX = 1
@@ -2967,6 +2980,7 @@ class CNCCanvas(GLCanvas):
         glDrawArrays(GL_TRIANGLES, 0, 6)
 
     def drawCamera(self):
+        self._make_current()
         glDisable(GL_CULL_FACE)
         glUseProgram(self.ImageProgram)
         glBindBuffer(GL_ARRAY_BUFFER, self.CameraVBO)
@@ -3010,6 +3024,7 @@ class CNCCanvas(GLCanvas):
         glDrawArrays(GL_TRIANGLES, 0, 6)
 
     def drawCrossHair(self):
+        self._make_current()
         glUseProgram(self.CrossHairProgram)
         glBindBuffer(GL_ARRAY_BUFFER, self.CrossHairVBO)
         PARAMETERS_PER_VERTEX = 1
@@ -3055,6 +3070,8 @@ class CNCCanvas(GLCanvas):
         if self._snapPoint is None:
             return
         
+        self._make_current()
+        
         glUseProgram(self.SnapPointProgram)
         glBindBuffer(GL_ARRAY_BUFFER, self.SnapPointVBO)
         PARAMETERS_PER_VERTEX = 1
@@ -3082,6 +3099,8 @@ class CNCCanvas(GLCanvas):
         glDrawArrays(GL_LINE_LOOP, 0, size // PARAMETERS_PER_VERTEX)
 
     def drawSelectionRectangle(self):
+        self._make_current()
+
         glDisable(GL_CULL_FACE)
         glUseProgram(self.SelectionRectProgram)
         glBindBuffer(GL_ARRAY_BUFFER, self.SelectionRectVBO)
@@ -3105,6 +3124,8 @@ class CNCCanvas(GLCanvas):
         glBindBuffer(GL_ARRAY_BUFFER, 0)
 
     def drawLines(self, vbo, lineWidth):
+        self._make_current()
+
         glEnable(GL_DEPTH_TEST)
         glUseProgram(self.linesProgram)
         glBindBuffer(GL_ARRAY_BUFFER, vbo)
@@ -3150,6 +3171,8 @@ class CNCCanvas(GLCanvas):
         glBindBuffer(GL_ARRAY_BUFFER, 0)
     
     def drawPaths(self, vbo, lineWidth):
+        self._make_current()
+
         glEnable(GL_DEPTH_TEST)
         glUseProgram(self.toolPathProgram)
         glBindBuffer(GL_ARRAY_BUFFER, vbo)
@@ -3200,6 +3223,8 @@ class CNCCanvas(GLCanvas):
         glBindBuffer(GL_ARRAY_BUFFER, 0)
     
     def drawGantry(self):
+        self._make_current()
+
         # Draw cone faces
         glUseProgram(self.gantryProgram)
         glEnable(GL_CULL_FACE)
@@ -3275,6 +3300,8 @@ class CNCCanvas(GLCanvas):
 
 
     def drawArrows(self, vbo):
+        self._make_current()
+
         glEnable(GL_DEPTH_TEST)
         glDisable(GL_CULL_FACE)
         glUseProgram(self.ArrowProgram)
@@ -3314,6 +3341,8 @@ class CNCCanvas(GLCanvas):
         glBindBuffer(GL_ARRAY_BUFFER, 0)
     
     def drawAxes(self):
+        self._make_current()
+
         glDisable(GL_DEPTH_TEST)
         glUseProgram(self.axesProgram)
         glBindBuffer(GL_ARRAY_BUFFER, self.axesVBO)
@@ -3347,6 +3376,8 @@ class CNCCanvas(GLCanvas):
         self.drawText(self.AxesTextVBO)
     
     def drawText(self, textBuffer):
+        self._make_current()
+
         glDisable(GL_DEPTH_TEST)
         glDisable(GL_CULL_FACE)
         glUseProgram(self.TextProgram)
@@ -3397,8 +3428,7 @@ class CNCCanvas(GLCanvas):
         self.after('idle', self.draw)
         
     def updateAll(self, view=None):
-
-        self.make_current()
+        self._make_current()
         
         self._last = (0.0, 0.0, 0.0)
         self.initPosition()
@@ -3489,6 +3519,7 @@ class CNCCanvas(GLCanvas):
         
         gantryVertices = numpy.array(vertices, dtype=numpy.float32)
         
+        self._make_current()
         glBindBuffer(GL_ARRAY_BUFFER, self.gantryVBO)
         glBufferData(GL_ARRAY_BUFFER, gantryVertices.nbytes, gantryVertices, GL_STATIC_DRAW)
         glBindBuffer(GL_ARRAY_BUFFER, 0)
@@ -3528,6 +3559,7 @@ class CNCCanvas(GLCanvas):
             0, 0, 0, 0, 3, 0, 0, axisLength, axisLength, 3
         ], dtype=numpy.float32)
         
+        self._make_current()
         glBindBuffer(GL_ARRAY_BUFFER, self.axesVBO)
         glBufferData(GL_ARRAY_BUFFER, axesVertices.nbytes, axesVertices, GL_STATIC_DRAW)
         glBindBuffer(GL_ARRAY_BUFFER, 0)
@@ -3540,8 +3572,22 @@ class CNCCanvas(GLCanvas):
             }
         self.update_text_buffer(self.AxesTextVBO, self.axesText)
 
+    def _make_current(self):
+        #self.update_idletasks()
+        if self.app.openglContext == self:
+            return
+        
+        self.app.openglContext = self
+        self.make_current()
+
+        if glGetString(GL_VERSION) is None:
+            raise RuntimeError(
+                "SimCanvas: OpenGL context not available"
+            )
+        
     # Update the selection rectangle
     def updateSelectionRect(self, x1, y1, x2, y2):
+        self._make_current()
         glBindBuffer(GL_ARRAY_BUFFER, self.SelectionRectVBO)
 
         p1 = self.canvas2Unit(vec2(x1, y1))
@@ -3822,6 +3868,7 @@ class CNCCanvas(GLCanvas):
     def clear_probe_map_buffer(self):
         probeMapVertices = numpy.array([], dtype=numpy.float32)
 
+        self._make_current()
         glBindBuffer(GL_ARRAY_BUFFER, self.ProbeMapVBO)
         glBufferData(GL_ARRAY_BUFFER, probeMapVertices.nbytes, probeMapVertices, GL_STATIC_DRAW)
 
@@ -3884,6 +3931,7 @@ class CNCCanvas(GLCanvas):
 
         probeMapVertices = numpy.array(probeMapData, dtype=numpy.float32)
 
+        self._make_current()
         glBindBuffer(GL_ARRAY_BUFFER, self.ProbeMapVBO)
         glBufferData(GL_ARRAY_BUFFER, probeMapVertices.nbytes, probeMapVertices, GL_STATIC_DRAW)
 

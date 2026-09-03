@@ -153,6 +153,8 @@ class Application(Tk, Sender):
         tkinter.CallWrapper = Utils.CallWrapper
         tkExtra.bindClasses(self)
 
+        self.openglContext = None # Point to the GLCanvas object owning the context
+
         photo = PhotoImage(file=f"{Utils.prgpath}/bCNC.png")
         self.iconphoto(True, photo)
         self.title(f"{Utils.__prg__} {__version__} {__platform_fingerprint__}")
@@ -256,8 +258,8 @@ class Application(Tk, Sender):
         # --- Simulation Canvas ---
         # Need to select tab2 before initializing SimCanvas, otherwise, it crashes
         notebook.select(tab2)
-        self.simCanvas = SimCanvas.SimCanvasFrame(tab2, self)
-        self.simCanvas.pack(side=TOP, fill=BOTH, expand=YES)
+        self.simCanvasFrame = SimCanvas.SimCanvasFrame(tab2, self)
+        self.simCanvasFrame.pack(side=TOP, fill=BOTH, expand=YES)
         notebook.select(tab1)
 
         # fist create Pages
@@ -798,6 +800,7 @@ class Application(Tk, Sender):
         Sender.saveConfig(self)
         self.tools.saveConfig()
         self.canvasFrame.saveConfig()
+        self.simCanvasFrame.saveConfig()
 
     # -----------------------------------------------------------------------
     def loadHistory(self):
