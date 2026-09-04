@@ -648,7 +648,7 @@ class SimCanvas(GLCanvas):
         glViewport(0, 0, HEIGHTMAP_RES, HEIGHTMAP_RES)
 
         #glClearBufferfv(GL_COLOR, 0, [STOCK_MAX_Z, 0.0, 0.0, 0.0])
-        glClear(GL_COLOR_BUFFER_BIT)
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glClearColor(STOCK_MAX_Z, 0.0, 0.0, 0.0)
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
