@@ -42,6 +42,7 @@ from tkinter import (
     StringVar,
     IntVar,
     BooleanVar,
+    DoubleVar,
     Button,
     Canvas,
     Checkbutton,
@@ -111,6 +112,8 @@ STOCK_MIN_Y = 0
 STOCK_MAX_Y = 100
 STOCK_MIN_Z = 0.
 STOCK_MAX_Z = 20.
+MILL_TYPES = {"Flat": 0, "Ball": 1}
+MILL_DIAMETER = 6.
 
 def mouseCursor(action):
     return MOUSE_CURSOR.get(action, DEF_CURSOR)
@@ -119,10 +122,10 @@ def mouseCursor(action):
 # Simulation canvas
 # =============================================================================
 class SimCanvas(GLCanvas):
+    profile = 'legacy'
+    
     def __init__(self, master, app, *kw, **kwargs):
         super().__init__(master)
-
-        profile = 'legacy'
 
         self.app = app
         self.cncCanvas = app.canvas
@@ -130,6 +133,7 @@ class SimCanvas(GLCanvas):
         self.windowing_system = self.app.call('tk', 'windowingsystem')
 
         # Canvas binding
+        self.bind("<Button-1>", self.click)
         self.bind("<Configure>", self.configureEvent)
         self.bind("<Button-2>", self.midClick)
         self.bind("<B2-Motion>", self.pan)
@@ -140,6 +144,11 @@ class SimCanvas(GLCanvas):
         self.bind("<Button-4>", self.mouseZoomIn)
         self.bind("<Button-5>", self.mouseZoomOut)
         self.bind("<MouseWheel>", self.wheel)
+        self.bind("<Key>", self.handleKey)
+
+        # Milling vars
+        self.millType = StringVar()
+        self.millDiameter = DoubleVar()
 
         # OPENGL vars
         self.MVMatrix = identity(mat4x4) # Model View Matrix
@@ -159,6 +168,13 @@ class SimCanvas(GLCanvas):
 
         self._gl_initialized = True
     
+    def click(self, event):
+        self.focus_set()
+
+    def handleKey(self, event):
+        if event.char == "f":
+            self.fit2Screen()
+    
     def rgb8(self, colorName):
         return (numpy.array(self.winfo_rgb(colorName)) * 255. / 65535.).astype(int)
     
@@ -166,10 +182,12 @@ class SimCanvas(GLCanvas):
         self.draw()
     
     def midClick(self, event):
+        self.focus_set()
         self._x = self._xp = event.x
         self._y = self._yp = event.y
     
     def rightClick(self, event):
+        self.focus_set()
         self._x = event.x
         self._y = event.y
     
@@ -297,10 +315,17 @@ class SimCanvas(GLCanvas):
     
     def midRelease(self, event):
         # If there was no pan (just mid-click), and the user clicked on a path, 
-        # change the rotation center to the closest point of that line to the point where the user clicked
+        # change the rotation center to the point of the stock upper surface (unmilled stock) where the user clicked
         if self._mouseAction != ACTION_PAN and self._mouseAction != ACTION_ZOOM:
             #newRotationCenter, pointType = self.snapPoint(vec2(event.x, event.y))
             newRotationCenter = None
+
+            pClicked = self.canvas2WorldPlane(self.canvas2Unit(vec2(event.x, event.y)), vec3(0, 0, 1), vec3(0, 0, STOCK_MAX_Z), 1)
+
+            if pClicked is not None:
+                if pClicked.x >= STOCK_MIN_X and pClicked.x <= STOCK_MAX_X and pClicked.y >= STOCK_MIN_Y and pClicked.y <= STOCK_MAX_Y:
+                    newRotationCenter = pClicked
+
             # TODO: Implement change of rotation center
             if newRotationCenter is not None:
                 RS = mat3x3(self.MVMatrix)
@@ -622,7 +647,9 @@ class SimCanvas(GLCanvas):
 
         glViewport(0, 0, HEIGHTMAP_RES, HEIGHTMAP_RES)
 
-        glClearBufferfv(GL_COLOR, 0, [STOCK_MAX_Z, 0.0, 0.0, 0.0])
+        #glClearBufferfv(GL_COLOR, 0, [STOCK_MAX_Z, 0.0, 0.0, 0.0])
+        glClear(GL_COLOR_BUFFER_BIT)
+        glClearColor(STOCK_MAX_Z, 0.0, 0.0, 0.0)
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
 
@@ -646,6 +673,8 @@ class SimCanvas(GLCanvas):
         glUniform3fv(canvas_color_rgb_down_loc, 1, value_ptr(canvas_color_rgb_down))
 
         glDrawArrays(GL_TRIANGLES, 0, 6)
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
 
     def drawStockTop(self):
         self._make_current()
@@ -683,6 +712,9 @@ class SimCanvas(GLCanvas):
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.stockTopEBO)
         size = glGetBufferParameteriv(GL_ELEMENT_ARRAY_BUFFER, GL_BUFFER_SIZE) // 4
         glDrawElements(GL_TRIANGLES, size, GL_UNSIGNED_INT, None)
+
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
     
     def drawStockBottom(self):
         self._make_current()
@@ -713,6 +745,8 @@ class SimCanvas(GLCanvas):
         glUniform3fv(glGetUniformLocation(program=self.stockBottomProgram, name="light2dir"), 1, value_ptr(light2dir))
 
         glDrawArrays(GL_TRIANGLES, 0, 6)
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
     
     def drawStockSide(self, side: int):
         # Side -> 1: up, 2: down, 3: left, 4: right
@@ -744,7 +778,7 @@ class SimCanvas(GLCanvas):
         elif side == 2:
             p1 = vec3(STOCK_MIN_X, STOCK_MIN_Y, STOCK_MIN_Z)
             p2 = vec3(STOCK_MAX_X, STOCK_MIN_Y, STOCK_MAX_Z)
-        if side == 3:
+        elif side == 3:
             p1 = vec3(STOCK_MIN_X, STOCK_MIN_Y, STOCK_MIN_Z)
             p2 = vec3(STOCK_MIN_X, STOCK_MAX_Y, STOCK_MAX_Z)
         elif side == 4:
@@ -763,6 +797,8 @@ class SimCanvas(GLCanvas):
         glUniform3fv(glGetUniformLocation(program=self.stockSideProgram, name="light2dir"), 1, value_ptr(light2dir))
 
         glDrawArrays(GL_TRIANGLES, 0, 6)
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
     
     def getStockVisibleArea(self):
         if self.viewAngle(vec3(0, 0, 1)) == 90:
@@ -940,6 +976,8 @@ class SimCanvas(GLCanvas):
 
         glDrawArrays(GL_TRIANGLES, 0, 3)
 
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
         glUseProgram(0)
         glDisable(GL_SCISSOR_TEST)
 
@@ -958,16 +996,50 @@ class SimCanvas(GLCanvas):
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
 
-    def millExample(self):
+    def runSimulation(self):
         self.reset()
 
         lines16 = numpy.reshape(self.cncCanvas.pathVertices, (-1, 16))
+
+        millType = MILL_TYPES[self.millType.get()]
+        D = self.millDiameter.get()
 
         for line in lines16:
             p1 = vec3(line[1:4])
             p2 = vec3(line[9:12])
         
-            self.millSegment(p1, p2, 1, 6)
+            self.millSegment(p1, p2, millType, D)
+        self.queueDraw()
+    
+    def fit2Screen(self, event=None):
+        """
+        Zoom to Fit to Screen
+        """
+        
+        upVector = inverse(self.MVMatrix) * vec4(0, 1, 0, 0)
+        depthVector = inverse(self.MVMatrix) * vec4(0, 0, 1, 0)
+        
+        modelCenter = vec3((STOCK_MIN_X + STOCK_MAX_X) / 2., (STOCK_MIN_Y + STOCK_MAX_Y) / 2., (STOCK_MIN_Z + STOCK_MAX_Z) / 2.)
+        modelSize = math.sqrt(pow(STOCK_MAX_X - STOCK_MIN_X, 2) + pow(STOCK_MAX_Y - STOCK_MIN_Y, 2) + pow(STOCK_MIN_Z - STOCK_MAX_Z, 2))
+
+        self.MVMatrix = lookAt(
+            modelCenter + depthVector.xyz, # eye
+            modelCenter, # target
+            upVector.xyz # up
+            )
+        # Adjust the Projection Matrix
+        width = self.winfo_width()
+        height = self.winfo_height()
+        
+        self.zoom = min(width, height) / modelSize
+        
+        self.PMatrix = ortho(-width / 2.0 / self.zoom, 
+                             width / 2.0 / self.zoom, 
+                             -height / 2.0 / self.zoom,
+                             height / 2.0 / self.zoom, 
+                             -10000,
+                             10000)
+
         self.queueDraw()
 
 class SimCanvasFrame(Frame):
@@ -1065,18 +1137,18 @@ class SimCanvasFrame(Frame):
 
         lframe = LabelFrame(simPanel, text=_("End Mill"), foreground="DarkBlue")
         lframe.pack(side='top', fill='x', pady=10)
-
-        combo = tkExtra.Combobox(lframe, True, background=tkExtra.GLOBAL_CONTROL_BACKGROUND)
-        combo.fill(["Flat", "Ball"])
-        combo.set("Flat")
-        combo.pack(side='top', fill='x')
-        tkExtra.Balloon.set(combo, _("Type of End Mill"))
+        self.millType = tkinter.OptionMenu(lframe, self.canvas.millType, "Flat", "Ball")
+        #self.millType = tkExtra.Combobox(lframe, True, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, textvariable=self.canvas.millType)
+        #self.millType.fill(["Flat", "Ball"])
+        #self.millType.set("Flat")
+        self.millType.pack(side='top', fill='x')
+        tkExtra.Balloon.set(self.millType, _("Type of End Mill"))
 
         lineFrame = Frame(lframe)
         lineFrame.pack(side='top', fill='x', pady=10)
 
         Label(lineFrame, text=_("Diameter:")).pack(side='left')
-        self.millDiameter = tkExtra.FloatEntry(lineFrame, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, width=10)
+        self.millDiameter = tkExtra.FloatEntry(lineFrame, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, width=10, textvariable=self.canvas.millDiameter)
         self.millDiameter.pack(side='left', fill='x', expand=True, padx=5)
         tkExtra.Balloon.set(self.millDiameter, _("Mill Diameter"))
         self.addWidget(self.millDiameter)
@@ -1101,7 +1173,7 @@ class SimCanvasFrame(Frame):
         b.pack(side=LEFT)
         tkExtra.Balloon.set(b, _("Reset Stock"))
 
-        b = Button(toolbar, image=Utils.icons["start"], command=self.canvas.millExample)
+        b = Button(toolbar, image=Utils.icons["start"], command=self.canvas.runSimulation)
         b.pack(side=LEFT)
         tkExtra.Balloon.set(b, _("Run simulation"))
 
@@ -1175,12 +1247,18 @@ class SimCanvasFrame(Frame):
         self.view.set(VIEWS[VIEW_ISO3])
 
     def loadConfig(self):
+        global MILL_TYPE, MILL_DIAMETER
+
         self.stockXmin.set(Utils.getFloat("Simulation", "xmin", STOCK_MIN_X))
         self.stockXmax.set(Utils.getFloat("Simulation", "xmax", STOCK_MAX_X))
         self.stockYmin.set(Utils.getFloat("Simulation", "ymin", STOCK_MIN_Y))
         self.stockYmax.set(Utils.getFloat("Simulation", "ymax", STOCK_MAX_Y))
         self.stockZmin.set(Utils.getFloat("Simulation", "zmin", STOCK_MIN_Z))
         self.stockZmax.set(Utils.getFloat("Simulation", "zmax", STOCK_MAX_Z))
+
+        self.canvas.millType.set(Utils.getStr("Simulation", "milltype", "Flat"))
+
+        self.canvas.millDiameter.set(Utils.getFloat("Simulation", "milldiameter", 6.0))
 
     def saveConfig(self):
         Utils.addSection("Simulation")
@@ -1191,6 +1269,8 @@ class SimCanvasFrame(Frame):
         Utils.setFloat("Simulation", "ymax", self.stockYmax.get())
         Utils.setFloat("Simulation", "zmin", self.stockZmin.get())
         Utils.setFloat("Simulation", "zmax", self.stockZmax.get())
+        Utils.setStr("Simulation", "milltype", self.canvas.millType.get())
+        Utils.setFloat("Simulation", "millDiameter", self.canvas.millDiameter.get())
 
     def updateStockSize(self):
         try:
@@ -1226,4 +1306,5 @@ class SimCanvasFrame(Frame):
         STOCK_MAX_Z = zmax
 
         self.canvas.reset()
+        self.canvas.fit2Screen()
 

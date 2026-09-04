@@ -212,6 +212,9 @@ void main()
             }
         }
 
+        // Reference point at nose tip
+        cutterZ += toolRadius;
+
         newHeight = min(oldHeight, cutterZ);
     }
 

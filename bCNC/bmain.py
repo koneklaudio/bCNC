@@ -51,6 +51,8 @@ from tkinter import (
     messagebox,
 )
 
+from glm import exp
+
 from bCNC import SimCanvas
 
 try:
@@ -234,33 +236,32 @@ class Application(Tk, Sender):
         self.widgets.append(self.command)
 
         # --- Right side ---
-        frame = Frame(self.paned)
-        self.paned.add(frame)
+        # Canvas Frame. Contains both CNCCanvas and SimCanvas Pages
+        canvasContainer = Frame(self.paned)
+        self.paned.add(canvasContainer)
+        page1 = Frame(canvasContainer)
+        page2 = Frame(canvasContainer)
 
-        # --- Canvas notebook ---
-        notebook = Notebook(frame)
-        notebook.pack(side=TOP, fill=BOTH, expand=YES)
-        
-        # First tab
-        tab1 = Frame(notebook)
-        notebook.add(tab1, text="3d Viewport")
-        # Second tab
-        tab2 = Frame(notebook)
-        notebook.add(tab2, text="Simulation")
+        page1.place(x=0, y=0, relwidth=1, relheight=1)
+        page2.place(x=0, y=0, relwidth=1, relheight=1)
+
+        page1.tkraise()
+        self.update_idletasks()
 
         # --- 3D Canvas ---
-        self.canvasFrame = CNCCanvas.CanvasFrame(tab1, self)
-        self.canvasFrame.pack(side=TOP, fill=BOTH, expand=YES)
-
-        # XXX FIXME do I need the self.canvas?
+        self.canvasFrame = CNCCanvas.CanvasFrame(page1, self)
+        self.canvasFrame.pack(fill='both', expand=True)
+        
         self.canvas = self.canvasFrame.canvas
 
         # --- Simulation Canvas ---
-        # Need to select tab2 before initializing SimCanvas, otherwise, it crashes
-        notebook.select(tab2)
-        self.simCanvasFrame = SimCanvas.SimCanvasFrame(tab2, self)
-        self.simCanvasFrame.pack(side=TOP, fill=BOTH, expand=YES)
-        notebook.select(tab1)
+        # Create it only for GLSL 1.20
+        self.simCanvasFrame = None
+        if self.canvas.glslVersion == "1.220":
+            self.simCanvasFrame = SimCanvas.SimCanvasFrame(page2, self)
+            self.simCanvasFrame.pack(fill='both', expand=True)
+            self.simCanvasFrame.canvas.reset()
+            self.simCanvasFrame.canvas.fit2Screen()
 
         # fist create Pages
         self.pages = {}
@@ -800,7 +801,8 @@ class Application(Tk, Sender):
         Sender.saveConfig(self)
         self.tools.saveConfig()
         self.canvasFrame.saveConfig()
-        self.simCanvasFrame.saveConfig()
+        if self.simCanvasFrame is not None:
+            self.simCanvasFrame.saveConfig()
 
     # -----------------------------------------------------------------------
     def loadHistory(self):

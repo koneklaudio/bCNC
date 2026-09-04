@@ -222,6 +222,8 @@ class AlarmException(Exception):
 # Drawing canvas
 # =============================================================================
 class CNCCanvas(GLCanvas):
+    profile = 'legacy' # Opengl 2.1
+
     def rgb8(self, colorName):
         return (numpy.array(self.winfo_rgb(colorName)) * 255. / 65535.).astype(int)
     
@@ -233,8 +235,6 @@ class CNCCanvas(GLCanvas):
         
         self.parentFrame : Frame = master
 
-        profile = 'legacy' # Opengl 2.1
-
         # Global variables
         self.view = 0
         self.app = app
@@ -243,6 +243,7 @@ class CNCCanvas(GLCanvas):
         self.actionVar = IntVar()
 
         self.windowing_system = self.app.call('tk', 'windowingsystem')
+        self.glslVersion = None
 
         # Canvas binding
         self.bind("<Configure>", self.configureEvent)
@@ -385,6 +386,7 @@ class CNCCanvas(GLCanvas):
         try:
             self.initGL()
             print("Running GLSL 1.20")
+            self.glslVersion = "1.20"
         except Exception as e:
             print("----------")
             print(e)
@@ -395,6 +397,7 @@ class CNCCanvas(GLCanvas):
                 openglFolder = f"{os.path.abspath(os.path.dirname(__file__))}{os.sep}opengl{os.sep}v150{os.sep}"
                 self.initGL()
                 print("Running GLSL 1.50")
+                self.glslVersion = "1.50"
             except Exception as e:
                 print("----------")
                 print(e)
@@ -403,6 +406,7 @@ class CNCCanvas(GLCanvas):
                 openglFolder = f"{os.path.abspath(os.path.dirname(__file__))}{os.sep}opengl{os.sep}v100{os.sep}"
                 self.initGL()
                 print("Running GLSL 1.00")
+                self.glslVersion = "1.00"
         
         print("============================")
 
@@ -660,6 +664,7 @@ class CNCCanvas(GLCanvas):
         glBindBuffer(GL_ARRAY_BUFFER, self.CameraVBO)
         CameraRectVertices = numpy.array([1., 2., 3., 1., 3., 4.], dtype=numpy.float32)
         glBufferData(GL_ARRAY_BUFFER, CameraRectVertices.nbytes, CameraRectVertices, GL_STATIC_DRAW)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
         
         # ----- ARROW PROGRAM ------
         # Program to draw arrows
@@ -697,6 +702,7 @@ class CNCCanvas(GLCanvas):
         glBindBuffer(GL_ARRAY_BUFFER, self.CrossHairVBO)
         CrossHairVertices = numpy.arange(1, 293, dtype=numpy.float32)
         glBufferData(GL_ARRAY_BUFFER, CrossHairVertices.nbytes, CrossHairVertices, GL_STATIC_DRAW)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
 
     # ----- SNAP POINT PROGRAM ------
         # Program to draw the Snap Point
@@ -717,6 +723,7 @@ class CNCCanvas(GLCanvas):
         glBindBuffer(GL_ARRAY_BUFFER, self.SnapPointVBO)
         SnapPointVertices = numpy.array([1, 2, 3, 4, 1], dtype=numpy.float32)
         glBufferData(GL_ARRAY_BUFFER, SnapPointVertices.nbytes, SnapPointVertices, GL_STATIC_DRAW)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
 
         glClearColor(1.0, 1.0, 1.0, 1.0)
         
@@ -1482,10 +1489,12 @@ class CNCCanvas(GLCanvas):
 
 
     def midClick(self, event):
+        self.focus_set()
         self._x = self._xp = event.x
         self._y = self._yp = event.y
     
     def rightClick(self, event):
+        self.focus_set()
         self._x = event.x
         self._y = event.y
     
@@ -2399,7 +2408,6 @@ class CNCCanvas(GLCanvas):
     # Zoom to Fit to Screen
     # ----------------------------------------------------------------------
 
-    # New approach by onekk https://github.com/vlachoudis/bCNC/issues/1311
     def fit2Screen(self, event=None):
         """
         Zoom to Fit to Screen
@@ -2979,6 +2987,8 @@ class CNCCanvas(GLCanvas):
 
         glDrawArrays(GL_TRIANGLES, 0, 6)
 
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
     def drawCamera(self):
         self._make_current()
         glDisable(GL_CULL_FACE)
@@ -3023,6 +3033,8 @@ class CNCCanvas(GLCanvas):
 
         glDrawArrays(GL_TRIANGLES, 0, 6)
 
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
     def drawCrossHair(self):
         self._make_current()
         glUseProgram(self.CrossHairProgram)
@@ -3065,6 +3077,8 @@ class CNCCanvas(GLCanvas):
         glLineWidth(1.5)
         size = glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE) // 4
         glDrawArrays(GL_LINES, 0, size // PARAMETERS_PER_VERTEX)
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
     
     def drawSnapPoint(self):
         if self._snapPoint is None:
@@ -3097,6 +3111,8 @@ class CNCCanvas(GLCanvas):
         glLineWidth(2)
         size = glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE) // 4
         glDrawArrays(GL_LINE_LOOP, 0, size // PARAMETERS_PER_VERTEX)
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
 
     def drawSelectionRectangle(self):
         self._make_current()
@@ -3418,6 +3434,7 @@ class CNCCanvas(GLCanvas):
         glUniform1i(glGetUniformLocation(self.TextProgram, "ourTexture"), 0)
         size = glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE) // 4
         glDrawArrays(GL_TRIANGLES, 0, size // PARAMETERS_PER_VERTEX)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
         
     def queueDraw(self):
         if self._drawRequested:
@@ -3864,6 +3881,8 @@ class CNCCanvas(GLCanvas):
 
         size = glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE) // 4
         glDrawArrays(GL_TRIANGLES, 0, size // PARAMETERS_PER_VERTEX)
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
 
     def clear_probe_map_buffer(self):
         probeMapVertices = numpy.array([], dtype=numpy.float32)
