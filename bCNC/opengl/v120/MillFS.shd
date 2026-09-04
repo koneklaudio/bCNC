@@ -78,7 +78,7 @@ void main()
 
                     float t = dot(w, v) / dot(v, v);
 
-                    if (t >= 0 && t <= 1)
+                    if (t >= 0. && t <= 1.)
                     {
                         vec2 closest = pL.xy + t * (vLH.xy);
                         float distance = length(p - closest);

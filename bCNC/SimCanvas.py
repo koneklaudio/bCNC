@@ -883,8 +883,8 @@ class SimCanvas(GLCanvas):
 
         # Indices
 
-        i = numpy.arange(nx - 1)
-        j = numpy.arange(ny - 1)
+        i = numpy.arange(nx - 1, dtype=numpy.uint32)
+        j = numpy.arange(ny - 1, dtype=numpy.uint32)
 
         I, J = numpy.meshgrid(i, j)
 
