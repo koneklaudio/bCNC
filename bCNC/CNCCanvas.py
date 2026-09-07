@@ -59,7 +59,9 @@ from tkinter import (
     Radiobutton,
     Scrollbar,
     OptionMenu,
-    Toplevel
+    Toplevel,
+    LabelFrame,
+    messagebox
 )
 import tkinter
 
@@ -4584,7 +4586,6 @@ class CanvasFrame(Frame):
         self.show_sim = BooleanVar()
 
         self.loadConfig()
-
         self.view.trace_add('write', self.viewChange)
 
         toolbar = Frame(self, relief=RAISED)
@@ -4597,13 +4598,144 @@ class CanvasFrame(Frame):
         self.canvas = CNCCanvas(self, app, takefocus=True, background="White")
         # OpenGL context
         print(f"self.canvas.winfo_id(): {self.canvas.winfo_id()}")
-        self.canvas.grid(row=1, column=0, sticky=NSEW)
+        self.canvas.grid(row=1, column=1, sticky=NSEW)
 
         self.createCanvasToolbar(toolbar)
 
-        self.grid_rowconfigure(1, weight=1)
-        self.grid_columnconfigure(0, weight=1)
+        # --- SIM Panel ---
+        
+        self.simPanel = Frame(self, padx=5, pady=10)
 
+        lframe = LabelFrame(self.simPanel, text=_("Stock dimensions"), foreground="DarkBlue", padx=5)
+        lframe.pack(side='top', fill='x')
+
+        row, col = 0, 0
+        # Empty
+        col += 1
+        Label(lframe, text=_("Min")).grid(row=row, column=col, sticky=EW)
+        col += 1
+        Label(lframe, text=_("Max")).grid(row=row, column=col, sticky=EW)
+
+        # --- X ---
+        row += 1
+        col = 0
+        Label(lframe, text=_("X:")).grid(row=row, column=col, sticky=E)
+        col += 1
+        self.stockXmin = tkExtra.FloatEntry(lframe, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, width=5)
+        self.stockXmin.grid(row=row, column=col, sticky=EW)
+        tkExtra.Balloon.set(self.stockXmin, _("X minimum"))
+        self.addWidget(self.stockXmin)
+
+        col += 1
+        self.stockXmax = tkExtra.FloatEntry(lframe, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, width=5)
+        self.stockXmax.grid(row=row, column=col, sticky=EW)
+        tkExtra.Balloon.set(self.stockXmax, _("X maximum"))
+        self.addWidget(self.stockXmax)
+
+        # --- Y ---
+        row += 1
+        col = 0
+        Label(lframe, text=_("Y:")).grid(row=row, column=col, sticky=E)
+        col += 1
+        self.stockYmin = tkExtra.FloatEntry(lframe, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, width=5)
+        self.stockYmin.grid(row=row, column=col, sticky=EW)
+        tkExtra.Balloon.set(self.stockYmin, _("Y minimum"))
+        self.addWidget(self.stockYmin)
+
+        col += 1
+        self.stockYmax = tkExtra.FloatEntry(lframe, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, width=5)
+        self.stockYmax.grid(row=row, column=col, sticky=EW)
+        tkExtra.Balloon.set(self.stockYmax, _("Y maximum"))
+        self.addWidget(self.stockYmax)
+
+        # --- Z ---
+        row += 1
+        col = 0
+        Label(lframe, text=_("Z:")).grid(row=row, column=col, sticky=E)
+        col += 1
+        self.stockZmin = tkExtra.FloatEntry(lframe, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, width=5)
+        self.stockZmin.grid(row=row, column=col, sticky=EW)
+        tkExtra.Balloon.set(self.stockZmin, _("Z minimum"))
+        self.addWidget(self.stockZmin)
+
+        col += 1
+        self.stockZmax = tkExtra.FloatEntry(lframe, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, width=5)
+        self.stockZmax.grid(row=row, column=col, sticky=EW)
+        tkExtra.Balloon.set(self.stockZmax, _("Z maximum"))
+        self.addWidget(self.stockZmax)
+
+        # --- Update button ---
+        row += 1
+        col = 1
+        bRefresh = Button(lframe, text=_("Update"), compound=LEFT, command=self.updateStockSize, image=Utils.icons["refresh"], padx=2, pady=1)
+        bRefresh.grid(row=row, column=col, columnspan=2, sticky=EW)
+        self.addWidget(bRefresh)
+
+        lframe.grid_columnconfigure(1, weight=1)
+        lframe.grid_columnconfigure(2, weight=1)
+
+        # --- End Mill data ---
+
+        lframe = LabelFrame(self.simPanel, text=_("End Mill"), foreground="DarkBlue", padx=5)
+        lframe.pack(side='top', fill='x', pady=10)
+        self.millType = tkinter.OptionMenu(lframe, self.canvas.millType, "Flat", "Ball")
+        #self.millType = tkExtra.Combobox(lframe, True, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, textvariable=self.canvas.millType)
+        #self.millType.fill(["Flat", "Ball"])
+        #self.millType.set("Flat")
+        self.millType.pack(side='top', fill='x')
+        tkExtra.Balloon.set(self.millType, _("Type of End Mill"))
+
+        lineFrame = Frame(lframe)
+        lineFrame.pack(side='top', fill='x', pady=10)
+
+        Label(lineFrame, text=_("Diameter:")).pack(side='left')
+        self.millDiameter = tkExtra.FloatEntry(lineFrame, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, width=10, textvariable=self.canvas.millDiameter)
+        self.millDiameter.pack(side='left', fill='x', expand=True, padx=5)
+        tkExtra.Balloon.set(self.millDiameter, _("Mill Diameter"))
+        self.addWidget(self.millDiameter)
+
+        self.grid_rowconfigure(1, weight=1)
+        self.grid_columnconfigure(1, weight=1)
+
+        self.loadMillConfig()
+
+
+    # ----------------------------------------------------------------------
+    def updateStockSize(self):
+        try:
+            xmin = float(self.stockXmin.get())
+            xmax = float(self.stockXmax.get())
+            ymin = float(self.stockYmin.get())
+            ymax = float(self.stockYmax.get())
+            zmin = float(self.stockZmin.get())
+            zmax = float(self.stockZmax.get())
+        except:
+            messagebox.showinfo("Warning", "Please fill in all the stock dimensions")
+            return
+        
+        if xmax <= xmin:
+            messagebox.showinfo("Warning", "Xmax must be greater than Xmin")
+            return
+        
+        if ymax <= ymin:
+            messagebox.showinfo("Warning", "Ymax must be greater than Ymin")
+            return
+        
+        if zmax <= zmin:
+            messagebox.showinfo("Warning", "Zmax must be greater than Zmin")
+            return
+        
+        global STOCK_MIN_X, STOCK_MAX_X, STOCK_MIN_Y, STOCK_MAX_Y, STOCK_MIN_Z, STOCK_MAX_Z
+
+        STOCK_MIN_X = xmin
+        STOCK_MAX_X = xmax
+        STOCK_MIN_Y = ymin
+        STOCK_MAX_Y = ymax
+        STOCK_MIN_Z = zmin
+        STOCK_MAX_Z = zmax
+
+        self.canvas.resetStock()
+        self.canvas.fit2Screen()
     # ----------------------------------------------------------------------
     def addWidget(self, widget):
         self.app.widgets.append(widget)
@@ -4646,6 +4778,20 @@ class CanvasFrame(Frame):
         AXES_TEXT_COLOR = Utils.getStr("Color", "canvas.axestext", DEFAULT_AXES_TEXT_COLOR)
         RAPID_COLOR = Utils.getStr("Color", "canvas.rapid", DEFAULT_RAPID_COLOR)
 
+    def loadMillConfig(self):
+        global MILL_TYPE, MILL_DIAMETER
+
+        self.stockXmin.set(Utils.getFloat("Simulation", "xmin", STOCK_MIN_X))
+        self.stockXmax.set(Utils.getFloat("Simulation", "xmax", STOCK_MAX_X))
+        self.stockYmin.set(Utils.getFloat("Simulation", "ymin", STOCK_MIN_Y))
+        self.stockYmax.set(Utils.getFloat("Simulation", "ymax", STOCK_MAX_Y))
+        self.stockZmin.set(Utils.getFloat("Simulation", "zmin", STOCK_MIN_Z))
+        self.stockZmax.set(Utils.getFloat("Simulation", "zmax", STOCK_MAX_Z))
+
+        self.canvas.millType.set(Utils.getStr("Simulation", "milltype", "Flat"))
+
+        self.canvas.millDiameter.set(Utils.getFloat("Simulation", "milldiameter", 6.0))
+
     # ----------------------------------------------------------------------
     def saveConfig(self):
         Utils.setInt("Canvas", "drawtime", DRAW_TIME)
@@ -4663,6 +4809,18 @@ class CanvasFrame(Frame):
 
         for c in customColors:
             Utils.setStr("Color", c, globals()[customColors[c]["color"]])
+
+
+        Utils.addSection("Simulation")
+        
+        Utils.setFloat("Simulation", "xmin", self.stockXmin.get())
+        Utils.setFloat("Simulation", "xmax", self.stockXmax.get())
+        Utils.setFloat("Simulation", "ymin", self.stockYmin.get())
+        Utils.setFloat("Simulation", "ymax", self.stockYmax.get())
+        Utils.setFloat("Simulation", "zmin", self.stockZmin.get())
+        Utils.setFloat("Simulation", "zmax", self.stockZmax.get())
+        Utils.setStr("Simulation", "milltype", self.canvas.millType.get())
+        Utils.setFloat("Simulation", "millDiameter", self.canvas.millDiameter.get())
 
     # ----------------------------------------------------------------------
     # Canvas toolbar FIXME XXX should be moved to CNCCanvas
@@ -4865,8 +5023,12 @@ class CanvasFrame(Frame):
         
         if self.show_sim.get() == True:
             self.canvas.set_mode(CNCCanvas.MODE_SIM)
+            self.simPanel.grid(row=1, column=0, sticky=NSEW)
         else:
             self.canvas.set_mode(CNCCanvas.MODE_CNC)
+            self.simPanel.grid_forget()
+
+        self.canvas.queueDraw()
         
     # ----------------------------------------------------------------------
     def redraw(self, event=None):
