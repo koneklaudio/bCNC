@@ -3,6 +3,7 @@
 uniform vec3 light1dir;
 uniform vec3 light2dir;
 uniform vec3 stockMin;
+uniform float opacity;
 
 varying vec3 normal;
 varying float z;
@@ -19,5 +20,5 @@ void main() {
 
     float lighting = 0.25 + 0.75 * diffuse;
 
-    gl_FragColor = vec4(baseColor * lighting, 1.0);
+    gl_FragColor = vec4(baseColor * lighting, opacity);
 }

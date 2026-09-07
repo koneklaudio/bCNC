@@ -53,7 +53,7 @@ from tkinter import (
 
 from glm import exp
 
-from bCNC import SimCanvas
+from bCNC import ColorCanvas, SimCanvas
 
 try:
     import serial
@@ -240,36 +240,14 @@ class Application(Tk, Sender):
         frame = Frame(self.paned)
         self.paned.add(frame)
 
-        canvasContainer = Frame(frame)
-        canvasContainer.pack(side='top', expand=True, fill='both')
-        self.page1 = Frame(canvasContainer)
-        self.page2 = Frame(canvasContainer)
-
-        self.page1.place(x=0, y=0, relwidth=1, relheight=1)
-        self.page2.place(x=0, y=0, relwidth=1, relheight=1)
-
-        self.page1.tkraise()
-        self.update_idletasks()
+        self.canvasContainer = Frame(frame)
+        self.canvasContainer.pack(side='top', expand=True, fill='both')
 
         # --- 3D Canvas ---
-        self.canvasFrame = CNCCanvas.CanvasFrame(self.page1, self)
+        self.canvasFrame = CNCCanvas.CanvasFrame(self.canvasContainer, self)
         self.canvasFrame.pack(fill='both', expand=True)
         
         self.canvas = self.canvasFrame.canvas
-
-        # --- Simulation Canvas ---
-        # Create it only for GLSL 1.20
-        self.simCanvasFrame = None
-
-        tabsFrame = Frame(frame)
-        tabsFrame.pack(fill='both', expand=False)
-
-        self.canvasButton = Button(tabsFrame, text="3D Viewport", relief="raised", command=self.showCanvas)
-        self.canvasButton.pack(side='left')
-
-        if self.canvas.glslVersion == "1.20":
-            self.simCanvasButton = Button(tabsFrame, text="Simulation", relief="flat", command=self.showSimCanvas)
-            self.simCanvasButton.pack(side='left')
 
         # fist create Pages
         self.pages = {}
@@ -598,29 +576,6 @@ class Application(Tk, Sender):
             self.bufferbar.update_idletasks()
 
     # -----------------------------------------------------------------------
-    def showCanvas(self):
-        self.page1.tkraise()
-        self.canvasButton.config(relief="raised")
-        self.simCanvasButton.config(relief="flat")
-
-    # -----------------------------------------------------------------------
-    def showSimCanvas(self):
-        self.page2.tkraise()
-        self.canvasButton.config(relief="flat")
-        self.simCanvasButton.config(relief="raised")
-
-        if self.simCanvasFrame is None:
-            self.simCanvasFrame = SimCanvas.SimCanvasFrame(self.page2, self)
-            self.simCanvasFrame.pack(fill='both', expand=True)
-
-            # Wait until the canvas is fully configured
-            while self.simCanvasFrame.canvas.winfo_width() == 1:
-                self.update_idletasks()
-
-            self.simCanvasFrame.canvas.reset()
-            self.simCanvasFrame.canvas.fit2Screen()
-
-    # -----------------------------------------------------------------------
     # Set a status message from an event
     # -----------------------------------------------------------------------
     def updateStatus(self, event):
@@ -832,8 +787,6 @@ class Application(Tk, Sender):
         Sender.saveConfig(self)
         self.tools.saveConfig()
         self.canvasFrame.saveConfig()
-        if self.simCanvasFrame is not None:
-            self.simCanvasFrame.saveConfig()
 
     # -----------------------------------------------------------------------
     def loadHistory(self):

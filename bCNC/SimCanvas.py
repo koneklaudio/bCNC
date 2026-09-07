@@ -129,6 +129,7 @@ class SimCanvas(GLCanvas):
 
         self.app = app
         self.cncCanvas = app.canvas
+        self.parentFrame = master
 
         self.windowing_system = self.app.call('tk', 'windowingsystem')
 
@@ -367,6 +368,10 @@ class SimCanvas(GLCanvas):
     
     def draw(self):
         if not self._gl_initialized:
+            return
+        
+        if self.app.activeFrame != self.parentFrame:
+            self._drawRequested = False
             return
         
         self._make_current()
@@ -637,6 +642,13 @@ class SimCanvas(GLCanvas):
             raise RuntimeError(
                 "SimCanvas: OpenGL context not available"
             )
+        
+        r, g, b, a = glGetFloatv(GL_COLOR_CLEAR_VALUE)
+
+        while r == 0.1:
+            self.update_idletasks()
+            print(r)
+        print(r)
     
     def reset(self):
         self._make_current()
@@ -648,8 +660,8 @@ class SimCanvas(GLCanvas):
         glViewport(0, 0, HEIGHTMAP_RES, HEIGHTMAP_RES)
 
         #glClearBufferfv(GL_COLOR, 0, [STOCK_MAX_Z, 0.0, 0.0, 0.0])
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glClearColor(STOCK_MAX_Z, 0.0, 0.0, 0.0)
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
 
