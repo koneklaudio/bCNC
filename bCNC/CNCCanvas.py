@@ -50,6 +50,7 @@ from tkinter import (
     StringVar,
     IntVar,
     BooleanVar,
+    DoubleVar,
     Button,
     Canvas,
     Checkbutton,
@@ -58,7 +59,11 @@ from tkinter import (
     Radiobutton,
     Scrollbar,
     OptionMenu,
-    Toplevel
+    Toplevel,
+    LabelFrame,
+    Variable,
+    messagebox,
+    Scale
 )
 import tkinter
 
@@ -131,8 +136,8 @@ AXES_TEXT_COLOR = DEFAULT_AXES_TEXT_COLOR = "Black"
 RAPID_COLOR = DEFAULT_RAPID_COLOR = ""
 customColors = {
     "canvas.gantry": {"color": "GANTRY_COLOR", "description": "Gantry", "canBeBlank": False},
-    "canvas.margin": {"color": "MARGIN_COLOR", "description": "Margin", "canBeBlank": False},
-    "canvas.grid": {"color": "GRID_COLOR", "description": "Grid", "canBeBlank": False},
+    "canvas.margin": {"color": "MARGIN_COLOR", "description": "Margin (Requires Redraw)", "canBeBlank": False},
+    "canvas.grid": {"color": "GRID_COLOR", "description": "Grid (Requires Redraw)", "canBeBlank": False},
     "canvas.enable": {"color": "ENABLE_COLOR", "description": "Enabled Path (Requires Redraw)", "canBeBlank": False},
     "canvas.disable": {"color": "DISABLE_COLOR", "description": "Disabled Path", "canBeBlank": False},
     "canvas.select": {"color": "SELECT_COLOR", "description": "Selected Active", "canBeBlank": False},
@@ -207,6 +212,18 @@ FLAG_ENABLED = 0b10
 
 openglFolder = f"{os.path.abspath(os.path.dirname(__file__))}{os.sep}opengl{os.sep}v120{os.sep}"
 
+# Simulator variables
+HEIGHTMAP_RES = 10000
+MESH_RES = 1000
+STOCK_MIN_X = 0
+STOCK_MAX_X = 100
+STOCK_MIN_Y = 0
+STOCK_MAX_Y = 100
+STOCK_MIN_Z = -10.
+STOCK_MAX_Z = 0.
+MILL_TYPES = {"Flat": 0, "Ball": 1}
+MILL_DIAMETER = 6.
+
 # -----------------------------------------------------------------------------
 def mouseCursor(action):
     return MOUSE_CURSOR.get(action, DEF_CURSOR)
@@ -222,6 +239,11 @@ class AlarmException(Exception):
 # Drawing canvas
 # =============================================================================
 class CNCCanvas(GLCanvas):
+    profile = 'legacy' # Opengl 2.1
+
+    MODE_CNC = 0
+    MODE_SIM = 1
+
     def rgb8(self, colorName):
         return (numpy.array(self.winfo_rgb(colorName)) * 255. / 65535.).astype(int)
     
@@ -233,8 +255,6 @@ class CNCCanvas(GLCanvas):
         
         self.parentFrame : Frame = master
 
-        profile = 'legacy' # Opengl 2.1
-
         # Global variables
         self.view = 0
         self.app = app
@@ -242,7 +262,27 @@ class CNCCanvas(GLCanvas):
         self.gcode = app.gcode
         self.actionVar = IntVar()
 
+        self.mode = CNCCanvas.MODE_CNC
+
+        self._gl_initialized_cnc = False
+        self._gl_initialized_sim = False
+
         self.windowing_system = self.app.call('tk', 'windowingsystem')
+        version = self.app.call("info", "patchlevel")
+        
+        # On MacOS / tk <=8.6, swap middle and right mouse buttons
+        aqua = self.windowing_system == "aqua"
+        major, minor, *_ = map(int, version.split("."))
+        old_aqua = aqua and (major, minor) < (8, 7)
+        if old_aqua:
+            button_mid = "3"
+            button_right = "2"
+        else:
+            button_mid = "2"
+            button_right = "3"
+        
+        # GLSL Version
+        self.glslVersion = None
 
         # Canvas binding
         self.bind("<Configure>", self.configureEvent)
@@ -252,16 +292,16 @@ class CNCCanvas(GLCanvas):
         self.bind("<ButtonRelease-1>", self.release)
         self.bind("<Double-1>", self.double)
 
-        self.bind("<Button-2>", self.midClick)
-        self.bind("<Shift-B2-Motion>", self.midZoom)
-        self.bind("<B2-Motion>", self.pan)
-        self.bind("<ButtonRelease-2>", self.midRelease)
+        self.bind("<Button-" + button_mid + ">", self.midClick)
+        self.bind("<Shift-B" + button_mid + "-Motion>", self.midZoom)
+        self.bind("<B" + button_mid + "-Motion>", self.pan)
+        self.bind("<ButtonRelease-" + button_mid + ">", self.midRelease)
         self.bind("<Button-4>", self.mouseZoomIn)
         self.bind("<Button-5>", self.mouseZoomOut)
         self.bind("<MouseWheel>", self.wheel)
-        self.bind("<Button-3>", self.rightClick)
-        self.bind("<B3-Motion>", self.rotate)
-        self.bind("<ButtonRelease-3>", self.rightRelease)
+        self.bind("<Button-" + button_right + ">", self.rightClick)
+        self.bind("<B" + button_right + "-Motion>", self.rotate)
+        self.bind("<ButtonRelease-" + button_right + ">", self.rightRelease)
 
         self.bind("<Shift-Button-4>", self.panLeft)
         self.bind("<Shift-Button-5>", self.panRight)
@@ -370,6 +410,7 @@ class CNCCanvas(GLCanvas):
         # Print OpenGL version info
         print("========== OpenGL ==========")
         print("OpenGL version:", glGetString(GL_VERSION))
+        print("OpenGL renderer:", glGetString(GL_RENDERER))
         print("GLSL version:", glGetString(GL_SHADING_LANGUAGE_VERSION))
 
         try:
@@ -384,6 +425,7 @@ class CNCCanvas(GLCanvas):
         try:
             self.initGL()
             print("Running GLSL 1.20")
+            self.glslVersion = "1.20"
         except Exception as e:
             print("----------")
             print(e)
@@ -394,6 +436,7 @@ class CNCCanvas(GLCanvas):
                 openglFolder = f"{os.path.abspath(os.path.dirname(__file__))}{os.sep}opengl{os.sep}v150{os.sep}"
                 self.initGL()
                 print("Running GLSL 1.50")
+                self.glslVersion = "1.50"
             except Exception as e:
                 print("----------")
                 print(e)
@@ -402,6 +445,7 @@ class CNCCanvas(GLCanvas):
                 openglFolder = f"{os.path.abspath(os.path.dirname(__file__))}{os.sep}opengl{os.sep}v100{os.sep}"
                 self.initGL()
                 print("Running GLSL 1.00")
+                self.glslVersion = "1.00"
         
         print("============================")
 
@@ -414,15 +458,22 @@ class CNCCanvas(GLCanvas):
 
         self.initPosition()
 
-        # Lines for debugging
-        """
-        probe = self.app.gcode.probe
-        probe.start = True
-        probe.makeMatrix()
-        probe.points = []
-        probe.add(0, 0, 3.7)
-        probe.add(100, 100, -2.2)
-        """
+        # Milling vars
+        self.millType = StringVar(value="Flat")
+        self.millDiameter = DoubleVar(value=6.0)
+        self.stockOpacity = IntVar(value=100)
+        self.millSelectedPathsOnly = BooleanVar(value=False)
+    
+    def set_mode(self, mode):
+        if mode == self.mode:
+            return
+
+        self.mode = mode
+
+        if mode == CNCCanvas.MODE_SIM:
+            self.initGL()
+
+        self.fit2Screen()
     
     def get_camera_image(self):
         if (self.camera.image is None) or (cv is None):
@@ -485,6 +536,18 @@ class CNCCanvas(GLCanvas):
         return id
 
     def initGL(self):
+        if self.mode == CNCCanvas.MODE_CNC:
+            self.initGL_cnc()
+        elif self.mode == CNCCanvas.MODE_SIM:
+            self.initGL_sim()
+
+    
+    def initGL_cnc(self):
+        if self._gl_initialized_cnc == True:
+            return
+        
+        self._gl_initialized_cnc = True
+
         # Create all the OpenGL shader programs
 
         # ----- BACKGROUND PROGRAM ------
@@ -657,6 +720,7 @@ class CNCCanvas(GLCanvas):
         glBindBuffer(GL_ARRAY_BUFFER, self.CameraVBO)
         CameraRectVertices = numpy.array([1., 2., 3., 1., 3., 4.], dtype=numpy.float32)
         glBufferData(GL_ARRAY_BUFFER, CameraRectVertices.nbytes, CameraRectVertices, GL_STATIC_DRAW)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
         
         # ----- ARROW PROGRAM ------
         # Program to draw arrows
@@ -694,6 +758,7 @@ class CNCCanvas(GLCanvas):
         glBindBuffer(GL_ARRAY_BUFFER, self.CrossHairVBO)
         CrossHairVertices = numpy.arange(1, 293, dtype=numpy.float32)
         glBufferData(GL_ARRAY_BUFFER, CrossHairVertices.nbytes, CrossHairVertices, GL_STATIC_DRAW)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
 
     # ----- SNAP POINT PROGRAM ------
         # Program to draw the Snap Point
@@ -714,8 +779,211 @@ class CNCCanvas(GLCanvas):
         glBindBuffer(GL_ARRAY_BUFFER, self.SnapPointVBO)
         SnapPointVertices = numpy.array([1, 2, 3, 4, 1], dtype=numpy.float32)
         glBufferData(GL_ARRAY_BUFFER, SnapPointVertices.nbytes, SnapPointVertices, GL_STATIC_DRAW)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
 
-        glClearColor(1.0, 1.0, 1.0, 1.0)
+        glClearColor(0., 0., 0., 1.0)
+    
+    def initGL_sim(self):
+        if self._gl_initialized_sim == True:
+            return
+        
+        self._gl_initialized_sim = True
+
+        # Create textures (height map) and framebuffers for milling simulation.
+        # The MillFS fragment shader reads the mapheight from FBO 0, writes changes to FBO 1, and then that area is copied back to FBO 0.
+        self.textures = glGenTextures(2)
+        self.fbos = glGenFramebuffers(2)
+
+        for i in range(2):
+            glBindTexture(
+                GL_TEXTURE_2D,
+                self.textures[i]
+            )
+
+            glTexParameteri(
+                GL_TEXTURE_2D,
+                GL_TEXTURE_MIN_FILTER,
+                GL_LINEAR
+            )
+
+            glTexParameteri(
+                GL_TEXTURE_2D,
+                GL_TEXTURE_MAG_FILTER,
+                GL_LINEAR
+            )
+
+            glTexParameteri(
+                GL_TEXTURE_2D,
+                GL_TEXTURE_WRAP_S,
+                GL_CLAMP_TO_EDGE
+            )
+
+            glTexParameteri(
+                GL_TEXTURE_2D,
+                GL_TEXTURE_WRAP_T,
+                GL_CLAMP_TO_EDGE
+            )
+
+            # One-channel 32-bit floating point height.
+            glTexImage2D(
+                GL_TEXTURE_2D,
+                0,
+                GL_R32F,
+                HEIGHTMAP_RES,
+                HEIGHTMAP_RES,
+                0,
+                GL_RED,
+                GL_FLOAT,
+                None
+            )
+
+            glBindFramebuffer(
+                GL_FRAMEBUFFER,
+                self.fbos[i]
+            )
+
+            glFramebufferTexture2D(
+                GL_FRAMEBUFFER,
+                GL_COLOR_ATTACHMENT0,
+                GL_TEXTURE_2D,
+                self.textures[i],
+                0
+            )
+
+            glDrawBuffers([GL_COLOR_ATTACHMENT0])
+
+            status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
+
+            if status != GL_FRAMEBUFFER_COMPLETE:
+                raise RuntimeError(
+                    "Height FBO {} incomplete: {}".format(
+                        i,
+                        hex(status)
+                    )
+                )
+
+        glBindTexture(GL_TEXTURE_2D, 0)
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0)
+
+        self.resetStock()
+
+        # Create all the OpenGL shader programs
+
+        # ----- MILLING PROGRAM ------
+        # Vertex Shader code
+        with open(openglFolder + "MillVS.shd", "r") as file:
+            MillVSCode = file.read()
+
+        # Fragment Shader code
+        with open(openglFolder + "MillFS.shd", "r") as file:
+            MillFSCode = file.read()
+
+        self.millProgram = self.createProgram(MillVSCode, MillFSCode)
+
+        # Create a Vertex Buffer Object (VBO)
+        self.millVBO = glGenBuffers(1)
+
+        # We create the fixed fullscreen triangle for the milling texture rendering
+        vertices = numpy.array([-1, -1, 3, -1, -1, 3], dtype=numpy.float32)
+        glBindBuffer(GL_ARRAY_BUFFER, self.millVBO)
+        glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_STATIC_DRAW)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+        # ----- STOCK TOP PROGRAM ------
+        # Vertex Shader code
+        with open(openglFolder + "StockMaterialVS.shd", "r") as file:
+            StockMaterialVSCode = file.read()
+
+        # Fragment Shader code
+        with open(openglFolder + "StockMaterialFS.shd", "r") as file:
+            StockMaterialFSCode = file.read()
+
+        self.stockTopProgram = self.createProgram(StockMaterialVSCode, StockMaterialFSCode)
+
+        # Create a Vertex Buffer Object (VBO)
+        self.stockTopVBO = glGenBuffers(1)
+
+        # Create an Element Buffer Object (EBO)
+        self.stockTopEBO = glGenBuffers(1)
+
+        # Create the stock material vertices and indices
+        self.updateStockMaterialBuffers(MESH_RES, MESH_RES)
+
+        # ----- STOCK BOTTOM PROGRAM ------
+        # Vertex Shader code
+        with open(openglFolder + "StockBottomVS.shd", "r") as file:
+            StockBottomVSCode = file.read()
+
+        # Fragment Shader code
+        with open(openglFolder + "StockBottomFS.shd", "r") as file:
+            StockBottomFSCode = file.read()
+
+        self.stockBottomProgram = self.createProgram(StockBottomVSCode, StockBottomFSCode)
+
+        # Create a Vertex Buffer Object (VBO)
+        self.stockBottomVBO = glGenBuffers(1)
+
+        # Create the stock bottom vertex indices
+        indices = numpy.array([1, 2, 3, 1, 3, 4], dtype=numpy.float32)
+              
+        glBindBuffer(GL_ARRAY_BUFFER, self.stockBottomVBO)     
+        glBufferData(GL_ARRAY_BUFFER, indices.nbytes, indices, GL_STATIC_DRAW)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+        # ----- STOCK SIDE PROGRAM ------
+        # Vertex Shader code
+        with open(openglFolder + "StockSideVS.shd", "r") as file:
+            StockSideVSCode = file.read()
+
+        # Fragment Shader code
+        with open(openglFolder + "StockSideFS.shd", "r") as file:
+            StockSideFSCode = file.read()
+
+        self.stockSideProgram = self.createProgram(StockSideVSCode, StockSideFSCode)
+
+        # Create a Vertex Buffer Object (VBO)
+        self.stockSideVBO = glGenBuffers(1)
+
+        # Create the stock side vertex indices
+        indices = numpy.array([1, 2, 3, 1, 3, 4], dtype=numpy.float32)
+              
+        glBindBuffer(GL_ARRAY_BUFFER, self.stockSideVBO)     
+        glBufferData(GL_ARRAY_BUFFER, indices.nbytes, indices, GL_STATIC_DRAW)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+    def updateStockMaterialBuffers(self, nx, ny):
+        # Vertices (normalized from 0. to 1.)
+
+        xval, yval = numpy.indices((nx, ny), dtype=numpy.float32)
+        xval /= nx - 1
+        yval /= ny - 1
+        vertices = numpy.stack([xval.T.ravel(), yval.T.ravel()], axis=1)
+              
+        glBindBuffer(GL_ARRAY_BUFFER, self.stockTopVBO)     
+        glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_STATIC_DRAW)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+        # Indices
+
+        i = numpy.arange(nx - 1, dtype=numpy.uint32)
+        j = numpy.arange(ny - 1, dtype=numpy.uint32)
+
+        I, J = numpy.meshgrid(i, j)
+
+        bl = J * nx + I
+        br = bl + 1
+        tl = bl + nx
+        tr = tl + 1
+
+        indices = numpy.stack([
+            bl, br, tr,
+            bl, tr, tl
+        ], axis=-1).ravel()
+
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.stockTopEBO)
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.nbytes, indices, GL_STATIC_DRAW)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0)
         
     def createProgram(self, vertexShaderCode, fragmentShaderCode):
         # Compile Vertex Shader
@@ -883,7 +1151,7 @@ class CNCCanvas(GLCanvas):
                 self._modelSize = math.sqrt(math.pow(maxX-minX, 2) + math.pow(maxY-minY, 2) + math.pow(maxZ-minZ, 2))
         
         vertices = numpy.array(vertexArray, dtype=numpy.float32)
-        
+
         glBindBuffer(GL_ARRAY_BUFFER, buffer)
         glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_DYNAMIC_DRAW)
 
@@ -996,7 +1264,7 @@ class CNCCanvas(GLCanvas):
             ])
         
         vertices = numpy.array(vertexArray, dtype=numpy.float32)
-        
+
         glBindBuffer(GL_ARRAY_BUFFER, buffer)
         glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_DYNAMIC_DRAW)
 
@@ -1089,7 +1357,7 @@ class CNCCanvas(GLCanvas):
                 hOffset += self.charOffsetAndWidth[ord(text[ch])][1]
             
         textVertices = numpy.array(char_data, dtype=numpy.float32)
-        
+
         glBindBuffer(GL_ARRAY_BUFFER, buffer)
         glBufferData(GL_ARRAY_BUFFER, textVertices.nbytes, textVertices, GL_DYNAMIC_DRAW)
 
@@ -1474,10 +1742,12 @@ class CNCCanvas(GLCanvas):
 
 
     def midClick(self, event):
+        self.focus_set()
         self._x = self._xp = event.x
         self._y = self._yp = event.y
     
     def rightClick(self, event):
+        self.focus_set()
         self._x = event.x
         self._y = event.y
     
@@ -2390,7 +2660,6 @@ class CNCCanvas(GLCanvas):
     # Zoom to Fit to Screen
     # ----------------------------------------------------------------------
 
-    # New approach by onekk https://github.com/vlachoudis/bCNC/issues/1311
     def fit2Screen(self, event=None):
         """
         Zoom to Fit to Screen
@@ -2398,17 +2667,34 @@ class CNCCanvas(GLCanvas):
         
         upVector = inverse(self.MVMatrix) * vec4(0, 1, 0, 0)
         depthVector = inverse(self.MVMatrix) * vec4(0, 0, 1, 0)
+
+        # If we are in SIM mode, include the stock cube in the model dimensions
+        if self.mode == CNCCanvas.MODE_SIM:
+            minx = min(self._modelCenter.x - self._modelSize / 2., STOCK_MIN_X)
+            maxx = max(self._modelCenter.x + self._modelSize / 2., STOCK_MAX_X)
+            miny = min(self._modelCenter.y - self._modelSize / 2., STOCK_MIN_Y)
+            maxy = max(self._modelCenter.y + self._modelSize / 2., STOCK_MAX_Y)
+            minz = min(self._modelCenter.z - self._modelSize / 2., STOCK_MIN_Z)
+            maxz = max(self._modelCenter.z + self._modelSize / 2., STOCK_MAX_Z)
+
+            modelSize = math.sqrt(pow(maxx - minx, 2.) + pow(maxy - miny, 2.) + pow(maxz - minz, 2.))
+            modelCenter = vec3((maxx + minx) / 2., (maxy + miny) / 2., (maxz + minz) / 2.)
+        
+        else:
+            modelSize = self._modelSize
+            modelCenter = self._modelCenter
+
         
         self.MVMatrix = lookAt(
-            self._modelCenter + depthVector.xyz, # eye
-            self._modelCenter, # target
+            modelCenter + depthVector.xyz, # eye
+            modelCenter, # target
             upVector.xyz # up
             )
         # Adjust the Projection Matrix
         width = self.winfo_width()
         height = self.winfo_height()
         
-        self.zoom = min(width, height) / self._modelSize
+        self.zoom = min(width, height) / modelSize
         
         self.PMatrix = ortho(-width / 2.0 / self.zoom, 
                              width / 2.0 / self.zoom, 
@@ -2846,7 +3132,6 @@ class CNCCanvas(GLCanvas):
     # Parse and draw the file from the editor to g-code commands
     # ----------------------------------------------------------------------
     def draw(self):
-        self.make_current()
         width, height = self.winfo_width(), self.winfo_height()
         
         # Check readiness of the buffer
@@ -2862,7 +3147,7 @@ class CNCCanvas(GLCanvas):
         glEnable(GL_DEPTH_TEST)
         glDepthFunc(GL_LEQUAL)
         glEnable(GL_BLEND)
-        glEnable(GL_LINE_SMOOTH)
+        glDisable(GL_LINE_SMOOTH)
         glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)
         
         # Draw background
@@ -2923,6 +3208,17 @@ class CNCCanvas(GLCanvas):
         if len(self.infoArrows) > 0:
             self.drawArrows(self.infoArrowsVBO)
         
+        if self.mode == CNCCanvas.MODE_SIM:
+            # Draw stock material
+            glDisable(GL_CULL_FACE)
+            glEnable(GL_DEPTH_TEST)
+            self.drawStockBottom()
+            self.drawStockTop()
+            self.drawStockSide(1)
+            self.drawStockSide(2)
+            self.drawStockSide(3)
+            self.drawStockSide(4)
+        
         # Draw Text
         if len(self.text) > 0:
             self.drawText(self.TextVBO)
@@ -2965,6 +3261,8 @@ class CNCCanvas(GLCanvas):
         glUniform3fv(canvas_color_rgb_down_loc, 1, value_ptr(canvas_color_rgb_down))
 
         glDrawArrays(GL_TRIANGLES, 0, 6)
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
 
     def drawCamera(self):
         glDisable(GL_CULL_FACE)
@@ -3009,6 +3307,8 @@ class CNCCanvas(GLCanvas):
 
         glDrawArrays(GL_TRIANGLES, 0, 6)
 
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
     def drawCrossHair(self):
         glUseProgram(self.CrossHairProgram)
         glBindBuffer(GL_ARRAY_BUFFER, self.CrossHairVBO)
@@ -3050,6 +3350,8 @@ class CNCCanvas(GLCanvas):
         glLineWidth(1.5)
         size = glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE) // 4
         glDrawArrays(GL_LINES, 0, size // PARAMETERS_PER_VERTEX)
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
     
     def drawSnapPoint(self):
         if self._snapPoint is None:
@@ -3081,7 +3383,10 @@ class CNCCanvas(GLCanvas):
         size = glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE) // 4
         glDrawArrays(GL_LINE_LOOP, 0, size // PARAMETERS_PER_VERTEX)
 
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
     def drawSelectionRectangle(self):
+
         glDisable(GL_CULL_FACE)
         glUseProgram(self.SelectionRectProgram)
         glBindBuffer(GL_ARRAY_BUFFER, self.SelectionRectVBO)
@@ -3105,6 +3410,7 @@ class CNCCanvas(GLCanvas):
         glBindBuffer(GL_ARRAY_BUFFER, 0)
 
     def drawLines(self, vbo, lineWidth):
+
         glEnable(GL_DEPTH_TEST)
         glUseProgram(self.linesProgram)
         glBindBuffer(GL_ARRAY_BUFFER, vbo)
@@ -3150,6 +3456,7 @@ class CNCCanvas(GLCanvas):
         glBindBuffer(GL_ARRAY_BUFFER, 0)
     
     def drawPaths(self, vbo, lineWidth):
+
         glEnable(GL_DEPTH_TEST)
         glUseProgram(self.toolPathProgram)
         glBindBuffer(GL_ARRAY_BUFFER, vbo)
@@ -3200,6 +3507,7 @@ class CNCCanvas(GLCanvas):
         glBindBuffer(GL_ARRAY_BUFFER, 0)
     
     def drawGantry(self):
+
         # Draw cone faces
         glUseProgram(self.gantryProgram)
         glEnable(GL_CULL_FACE)
@@ -3275,6 +3583,7 @@ class CNCCanvas(GLCanvas):
 
 
     def drawArrows(self, vbo):
+
         glEnable(GL_DEPTH_TEST)
         glDisable(GL_CULL_FACE)
         glUseProgram(self.ArrowProgram)
@@ -3314,6 +3623,7 @@ class CNCCanvas(GLCanvas):
         glBindBuffer(GL_ARRAY_BUFFER, 0)
     
     def drawAxes(self):
+
         glDisable(GL_DEPTH_TEST)
         glUseProgram(self.axesProgram)
         glBindBuffer(GL_ARRAY_BUFFER, self.axesVBO)
@@ -3347,6 +3657,7 @@ class CNCCanvas(GLCanvas):
         self.drawText(self.AxesTextVBO)
     
     def drawText(self, textBuffer):
+
         glDisable(GL_DEPTH_TEST)
         glDisable(GL_CULL_FACE)
         glUseProgram(self.TextProgram)
@@ -3387,6 +3698,7 @@ class CNCCanvas(GLCanvas):
         glUniform1i(glGetUniformLocation(self.TextProgram, "ourTexture"), 0)
         size = glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE) // 4
         glDrawArrays(GL_TRIANGLES, 0, size // PARAMETERS_PER_VERTEX)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
         
     def queueDraw(self):
         if self._drawRequested:
@@ -3397,8 +3709,6 @@ class CNCCanvas(GLCanvas):
         self.after('idle', self.draw)
         
     def updateAll(self, view=None):
-
-        self.make_current()
         
         self._last = (0.0, 0.0, 0.0)
         self.initPosition()
@@ -3539,7 +3849,7 @@ class CNCCanvas(GLCanvas):
             3: [vec3(0, 0, axisLength * self.zoom), "Z", self.rgb8(AXES_TEXT_COLOR)]
             }
         self.update_text_buffer(self.AxesTextVBO, self.axesText)
-
+        
     # Update the selection rectangle
     def updateSelectionRect(self, x1, y1, x2, y2):
         glBindBuffer(GL_ARRAY_BUFFER, self.SelectionRectVBO)
@@ -3819,6 +4129,8 @@ class CNCCanvas(GLCanvas):
         size = glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE) // 4
         glDrawArrays(GL_TRIANGLES, 0, size // PARAMETERS_PER_VERTEX)
 
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
     def clear_probe_map_buffer(self):
         probeMapVertices = numpy.array([], dtype=numpy.float32)
 
@@ -4004,6 +4316,290 @@ class CNCCanvas(GLCanvas):
                     flags)
             
         return None
+    
+    def drawStockTop(self):
+        glUseProgram(self.stockTopProgram)
+        glBindBuffer(GL_ARRAY_BUFFER, self.stockTopVBO)
+        PARAMETERS_PER_VERTEX = 2
+        glVertexAttribPointer(glGetAttribLocation(self.stockTopProgram, "uv"), 2, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(0*4))
+        glEnableVertexAttribArray(glGetAttribLocation(self.stockTopProgram, "uv"))
+
+        MVP = self.PMatrix * self.MVMatrix
+        mv_loc = glGetUniformLocation(program=self.stockTopProgram, name="MVP")
+        glUniformMatrix4fv(mv_loc, 1, False, value_ptr(MVP))
+
+        glActiveTexture(GL_TEXTURE0)
+
+        glBindTexture(GL_TEXTURE_2D, self.textures[0])
+
+        glUniform1i(glGetUniformLocation(self.stockTopProgram, "heightMap"), 0)
+
+        glUniform3f(glGetUniformLocation(self.stockTopProgram, "stockMin"), STOCK_MIN_X, STOCK_MIN_Y, STOCK_MIN_Z)
+        glUniform3f(glGetUniformLocation(self.stockTopProgram, "stockMax"), STOCK_MAX_X, STOCK_MAX_Y, STOCK_MAX_Z)
+        glUniform1f(glGetUniformLocation(self.stockTopProgram, "meshResolution"), MESH_RES)
+        glUniform1f(glGetUniformLocation(self.stockTopProgram, "opacity"), self.stockOpacity.get() / 100.)
+
+        uvmin, uvmax = self.getStockVisibleArea()
+        glUniform2f(glGetUniformLocation(self.stockTopProgram, "uvmin"), uvmin.x, uvmin.y)
+        glUniform2f(glGetUniformLocation(self.stockTopProgram, "uvmax"), uvmax.x, uvmax.y)
+
+        light1dir = normalize(inverse(MVP) * vec4(1.0, -0.25, -1.0, 0)).xyz
+        light2dir = normalize(inverse(MVP) * vec4(-0.5, -0.125, -0.5, 0)).xyz
+        
+        glUniform3fv(glGetUniformLocation(program=self.stockTopProgram, name="light1dir"), 1, value_ptr(light1dir))
+        glUniform3fv(glGetUniformLocation(program=self.stockTopProgram, name="light2dir"), 1, value_ptr(light2dir))
+
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.stockTopEBO)
+        size = glGetBufferParameteriv(GL_ELEMENT_ARRAY_BUFFER, GL_BUFFER_SIZE) // 4
+        glDrawElements(GL_TRIANGLES, size, GL_UNSIGNED_INT, None)
+
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+    
+    def drawStockBottom(self):
+        glUseProgram(self.stockBottomProgram)
+        glBindBuffer(GL_ARRAY_BUFFER, self.stockBottomVBO)
+        PARAMETERS_PER_VERTEX = 1
+        glVertexAttribPointer(glGetAttribLocation(self.stockBottomProgram, "index"), 1, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(0*4))
+        glEnableVertexAttribArray(glGetAttribLocation(self.stockBottomProgram, "index"))
+
+        MVP = self.PMatrix * self.MVMatrix
+        mv_loc = glGetUniformLocation(program=self.stockBottomProgram, name="MVP")
+        glUniformMatrix4fv(mv_loc, 1, False, value_ptr(MVP))
+
+        glActiveTexture(GL_TEXTURE0)
+
+        glBindTexture(GL_TEXTURE_2D, self.textures[0])
+
+        glUniform1i(glGetUniformLocation(self.stockBottomProgram, "heightMap"), 0)
+
+        glUniform3f(glGetUniformLocation(self.stockBottomProgram, "stockMin"), STOCK_MIN_X, STOCK_MIN_Y, STOCK_MIN_Z)
+        glUniform3f(glGetUniformLocation(self.stockBottomProgram, "stockMax"), STOCK_MAX_X, STOCK_MAX_Y, STOCK_MAX_Z)
+        glUniform1f(glGetUniformLocation(self.stockBottomProgram, "opacity"), self.stockOpacity.get() / 100.)
+
+        light1dir = normalize(inverse(MVP) * vec4(1.0, -0.25, -1.0, 0)).xyz
+        light2dir = normalize(inverse(MVP) * vec4(-0.5, -0.125, -0.5, 0)).xyz
+        
+        glUniform3fv(glGetUniformLocation(program=self.stockBottomProgram, name="light1dir"), 1, value_ptr(light1dir))
+        glUniform3fv(glGetUniformLocation(program=self.stockBottomProgram, name="light2dir"), 1, value_ptr(light2dir))
+
+        glDrawArrays(GL_TRIANGLES, 0, 6)
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+    
+    def drawStockSide(self, side: int):
+        # Side -> 1: up, 2: down, 3: left, 4: right
+        # p1 and p2 -> vertices of the side surface
+        glUseProgram(self.stockSideProgram)
+        glBindBuffer(GL_ARRAY_BUFFER, self.stockSideVBO)
+        PARAMETERS_PER_VERTEX = 1
+        glVertexAttribPointer(glGetAttribLocation(self.stockSideProgram, "index"), 1, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(0*4))
+        glEnableVertexAttribArray(glGetAttribLocation(self.stockSideProgram, "index"))
+
+        MVP = self.PMatrix * self.MVMatrix
+        mv_loc = glGetUniformLocation(program=self.stockSideProgram, name="MVP")
+        glUniformMatrix4fv(mv_loc, 1, False, value_ptr(MVP))
+
+        glActiveTexture(GL_TEXTURE0)
+
+        glBindTexture(GL_TEXTURE_2D, self.textures[0])
+
+        glUniform1i(glGetUniformLocation(self.stockSideProgram, "heightMap"), 0)
+
+        glUniform1f(glGetUniformLocation(self.stockSideProgram, "side"), float(side))
+
+        if side == 1:
+            p1 = vec3(STOCK_MIN_X, STOCK_MAX_Y, STOCK_MIN_Z)
+            p2 = vec3(STOCK_MAX_X, STOCK_MAX_Y, STOCK_MAX_Z)
+        elif side == 2:
+            p1 = vec3(STOCK_MIN_X, STOCK_MIN_Y, STOCK_MIN_Z)
+            p2 = vec3(STOCK_MAX_X, STOCK_MIN_Y, STOCK_MAX_Z)
+        elif side == 3:
+            p1 = vec3(STOCK_MIN_X, STOCK_MIN_Y, STOCK_MIN_Z)
+            p2 = vec3(STOCK_MIN_X, STOCK_MAX_Y, STOCK_MAX_Z)
+        elif side == 4:
+            p1 = vec3(STOCK_MAX_X, STOCK_MIN_Y, STOCK_MIN_Z)
+            p2 = vec3(STOCK_MAX_X, STOCK_MAX_Y, STOCK_MAX_Z)
+        else:
+            return
+
+        glUniform3f(glGetUniformLocation(self.stockSideProgram, "p1"), p1.x, p1.y, p1.z)
+        glUniform3f(glGetUniformLocation(self.stockSideProgram, "p2"), p2.x, p2.y, p2.z)
+        glUniform1f(glGetUniformLocation(self.stockSideProgram, "opacity"), self.stockOpacity.get() / 100.)
+
+        light1dir = normalize(inverse(MVP) * vec4(1.0, -0.25, -1.0, 0)).xyz
+        light2dir = normalize(inverse(MVP) * vec4(-0.5, -0.125, -0.5, 0)).xyz
+        
+        glUniform3fv(glGetUniformLocation(program=self.stockSideProgram, name="light1dir"), 1, value_ptr(light1dir))
+        glUniform3fv(glGetUniformLocation(program=self.stockSideProgram, name="light2dir"), 1, value_ptr(light2dir))
+
+        glDrawArrays(GL_TRIANGLES, 0, 6)
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+    
+    def getStockVisibleArea(self):
+        if self.viewAngle(vec3(0, 0, 1)) == 90:
+            return vec2(0, 0), vec2(1, 1)
+        
+        width = self.winfo_width()
+        height = self.winfo_height()
+        
+        # Project the 4 corners of the canvas to the stock upper surface
+        bl_up = self.canvas2WorldPlane(vec2(0, height), vec3(0, 0, 1), vec3(0, 0, STOCK_MAX_Z), 0)
+        br_up = self.canvas2WorldPlane(vec2(width, height), vec3(0, 0, 1), vec3(0, 0, STOCK_MAX_Z), 0)
+        ul_up = self.canvas2WorldPlane(vec2(0, 0), vec3(0, 0, 1), vec3(0, 0, STOCK_MAX_Z), 0)
+        ur_up = self.canvas2WorldPlane(vec2(width, 0), vec3(0, 0, 1), vec3(0, 0, STOCK_MAX_Z), 0)
+
+        # Project the 4 corners of the canvas to the stock lower surface
+        bl_lo = self.canvas2WorldPlane(vec2(0, height), vec3(0, 0, 1), vec3(0, 0, STOCK_MIN_Z), 0)
+        br_lo = self.canvas2WorldPlane(vec2(width, height), vec3(0, 0, 1), vec3(0, 0, STOCK_MIN_Z), 0)
+        ul_lo = self.canvas2WorldPlane(vec2(0, 0), vec3(0, 0, 1), vec3(0, 0, STOCK_MIN_Z), 0)
+        ur_lo = self.canvas2WorldPlane(vec2(width, 0), vec3(0, 0, 1), vec3(0, 0, STOCK_MIN_Z), 0)
+
+        xmin = min(bl_up.x, br_up.x, ul_up.x, ur_up.x, bl_lo.x, br_lo.x, ul_lo.x, ur_lo.x)
+        xmax = max(bl_up.x, br_up.x, ul_up.x, ur_up.x, bl_lo.x, br_lo.x, ul_lo.x, ur_lo.x)
+        ymin = min(bl_up.y, br_up.y, ul_up.y, ur_up.y, bl_lo.y, br_lo.y, ul_lo.y, ur_lo.y)
+        ymax = max(bl_up.y, br_up.y, ul_up.y, ur_up.y, bl_lo.y, br_lo.y, ul_lo.y, ur_lo.y)
+
+        uvminx = max(0, (xmin - STOCK_MIN_X) / (STOCK_MAX_X - STOCK_MIN_X))
+        uvmaxx = min(1, (xmax - STOCK_MIN_X) / (STOCK_MAX_X - STOCK_MIN_X))
+        uvminy = max(0, (ymin - STOCK_MIN_Y) / (STOCK_MAX_Y - STOCK_MIN_Y))
+        uvmaxy = min(1, (ymax - STOCK_MIN_Y) / (STOCK_MAX_Y - STOCK_MIN_Y))
+
+        return vec2(uvminx, uvminy), vec2(uvmaxx, uvmaxy)
+
+    def millSegment(self, p1: vec3, p2: vec3, toolType: int, diameter: float):
+        """
+        Single-pass, scissored milling update.
+
+        The fragment shader reads the source height texture and writes
+        the complete destination value for every pixel in the scissor
+        rectangle. Pixels outside the actual cutter footprint simply
+        write oldHeight unchanged.
+        """
+
+        # Cutter bounding box in workpiece coordinates.
+        min_x = max(STOCK_MIN_X, min(p1.x - diameter / 2., p2.x - diameter / 2))
+        max_x = min(STOCK_MAX_X, max(p1.x + diameter / 2., p2.x + diameter / 2))
+        min_y = max(STOCK_MIN_Y, min(p1.y - diameter / 2., p2.y - diameter / 2))
+        max_y = min(STOCK_MAX_Y, max(p1.y + diameter / 2., p2.y + diameter / 2))
+
+        if min_x >= max_x or min_y >= max_y:
+            return
+
+        work_w = STOCK_MAX_X - STOCK_MIN_X
+        work_h = STOCK_MAX_Y - STOCK_MIN_Y
+
+        # Convert physical XY to texture/framebuffer pixels.
+        sx0 = int(math.floor((min_x - STOCK_MIN_X) / work_w * HEIGHTMAP_RES))
+        sx1 = int(math.ceil((max_x - STOCK_MIN_X) / work_w * HEIGHTMAP_RES))
+
+        sy0 = int(math.floor((min_y - STOCK_MIN_Y) / work_h * HEIGHTMAP_RES))
+        sy1 = int(math.ceil((max_y - STOCK_MIN_Y) / work_h * HEIGHTMAP_RES))
+
+        sx0 = max(0, min(HEIGHTMAP_RES - 1, sx0))
+        sy0 = max(0, min(HEIGHTMAP_RES - 1, sy0))
+        sx1 = max(sx0 + 1, min(HEIGHTMAP_RES, sx1))
+        sy1 = max(sy0 + 1, min(HEIGHTMAP_RES, sy1))
+
+        width = sx1 - sx0
+        height = sy1 - sy0
+
+        # Destination FBO.
+        glBindFramebuffer(GL_FRAMEBUFFER, self.fbos[1])
+
+        glDrawBuffer(GL_COLOR_ATTACHMENT0)
+
+        glViewport(0, 0, HEIGHTMAP_RES, HEIGHTMAP_RES)
+
+        # Rasterization is restricted to the cutter's bounding box.
+        glEnable(GL_SCISSOR_TEST)
+        glScissor(sx0, sy0, width, height)
+
+        glDisable(GL_DEPTH_TEST)
+        glDisable(GL_BLEND)
+        glDisable(GL_CULL_FACE)
+
+        glUseProgram(self.millProgram)
+
+        # Source height map.
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D, self.textures[0])
+
+        glBindBuffer(GL_ARRAY_BUFFER, self.millVBO)
+        PARAMETERS_PER_VERTEX = 2
+        glVertexAttribPointer(glGetAttribLocation(self.millProgram, "pos"), 2, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(0*4))
+        glEnableVertexAttribArray(glGetAttribLocation(self.millProgram, "pos"))
+
+        glUniform1i(glGetUniformLocation(self.millProgram, "heightMap"), 0)
+        glUniform3f(glGetUniformLocation(self.millProgram, "pA"), p1.x, p1.y, p1.z)
+        glUniform3f(glGetUniformLocation(self.millProgram, "pB"), p2.x, p2.y, p2.z)
+        glUniform1f(glGetUniformLocation(self.millProgram, "toolRadius"), diameter / 2.)
+        glUniform1i(glGetUniformLocation(self.millProgram, "toolType"), toolType) # TODO: tool type as argument
+        glUniform2f(glGetUniformLocation(self.millProgram, "workMin"), STOCK_MIN_X, STOCK_MIN_Y)
+        glUniform2f(glGetUniformLocation(self.millProgram, "workMax"), STOCK_MAX_X, STOCK_MAX_Y)
+
+        glDrawArrays(GL_TRIANGLES, 0, 3)
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+        glUseProgram(0)
+        glDisable(GL_SCISSOR_TEST)
+
+        # Copy the milled region to the source framebuffer
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, self.fbos[1])
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, self.fbos[0])
+
+        glBlitFramebuffer(
+            sx0, sy0,
+            sx1, sy1,
+            sx0, sy0,
+            sx1, sy1,
+            GL_COLOR_BUFFER_BIT,
+            GL_NEAREST
+        )
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0)
+
+    def runSimulation(self):
+        if self.millType.get() == '':
+            return
+        
+        if self.millDiameter.get() == '':
+            return
+
+        lines16 = numpy.reshape(self.pathVertices, (-1, 16))
+
+        millType = MILL_TYPES[self.millType.get()]
+
+        D = self.millDiameter.get()
+
+        for line in lines16:
+            flags = int(line[7])
+
+            if flags & FLAG_ENABLED:
+                if not self.millSelectedPathsOnly.get() or ((flags & FLAG_SELECTED) != 0):                
+                    p1 = vec3(line[1:4])
+                    p2 = vec3(line[9:12])
+        
+                    self.millSegment(p1, p2, millType, D)
+
+        self.queueDraw()
+
+    def resetStock(self):
+        glDisable(GL_SCISSOR_TEST)
+        
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, self.fbos[0])
+
+        glViewport(0, 0, HEIGHTMAP_RES, HEIGHTMAP_RES)
+
+        #glClearBufferfv(GL_COLOR, 0, [STOCK_MAX_Z, 0.0, 0.0, 0.0])
+        glClearColor(STOCK_MAX_Z, 0.0, 0.0, 0.0)
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0)
+
+        self.queueDraw()
 
 # =============================================================================
 # Canvas Frame with toolbar
@@ -4022,9 +4618,10 @@ class CanvasFrame(Frame):
         self.draw_workarea = BooleanVar()
         self.draw_camera = BooleanVar()
         self.view = StringVar()
+        self.show_sim = BooleanVar()
+        self.first_time_sim_shown = True
 
         self.loadConfig()
-
         self.view.trace_add('write', self.viewChange)
 
         toolbar = Frame(self, relief=RAISED)
@@ -4037,13 +4634,161 @@ class CanvasFrame(Frame):
         self.canvas = CNCCanvas(self, app, takefocus=True, background="White")
         # OpenGL context
         print(f"self.canvas.winfo_id(): {self.canvas.winfo_id()}")
-        self.canvas.grid(row=1, column=0, sticky=NSEW)
+        self.canvas.grid(row=1, column=1, sticky=NSEW)
 
         self.createCanvasToolbar(toolbar)
 
-        self.grid_rowconfigure(1, weight=1)
-        self.grid_columnconfigure(0, weight=1)
+        # --- SIM Panel ---
+        
+        self.simPanel = Frame(self, padx=5, pady=10)
 
+        lframe = LabelFrame(self.simPanel, text=_("Stock dimensions"), foreground="DarkBlue", padx=5, pady = 5)
+        lframe.pack(side='top', fill='x')
+
+        row, col = 0, 0
+        # Empty
+        col += 1
+        Label(lframe, text=_("Min")).grid(row=row, column=col, sticky=EW)
+        col += 1
+        Label(lframe, text=_("Max")).grid(row=row, column=col, sticky=EW)
+
+        # --- X ---
+        row += 1
+        col = 0
+        Label(lframe, text=_("X:")).grid(row=row, column=col, sticky=E)
+        col += 1
+        self.stockXmin = tkExtra.FloatEntry(lframe, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, width=5)
+        self.stockXmin.grid(row=row, column=col, sticky=EW)
+        tkExtra.Balloon.set(self.stockXmin, _("X minimum"))
+        self.addWidget(self.stockXmin)
+
+        col += 1
+        self.stockXmax = tkExtra.FloatEntry(lframe, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, width=5)
+        self.stockXmax.grid(row=row, column=col, sticky=EW)
+        tkExtra.Balloon.set(self.stockXmax, _("X maximum"))
+        self.addWidget(self.stockXmax)
+
+        # --- Y ---
+        row += 1
+        col = 0
+        Label(lframe, text=_("Y:")).grid(row=row, column=col, sticky=E)
+        col += 1
+        self.stockYmin = tkExtra.FloatEntry(lframe, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, width=5)
+        self.stockYmin.grid(row=row, column=col, sticky=EW)
+        tkExtra.Balloon.set(self.stockYmin, _("Y minimum"))
+        self.addWidget(self.stockYmin)
+
+        col += 1
+        self.stockYmax = tkExtra.FloatEntry(lframe, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, width=5)
+        self.stockYmax.grid(row=row, column=col, sticky=EW)
+        tkExtra.Balloon.set(self.stockYmax, _("Y maximum"))
+        self.addWidget(self.stockYmax)
+
+        # --- Z ---
+        row += 1
+        col = 0
+        Label(lframe, text=_("Z:")).grid(row=row, column=col, sticky=E)
+        col += 1
+        self.stockZmin = tkExtra.FloatEntry(lframe, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, width=5)
+        self.stockZmin.grid(row=row, column=col, sticky=EW)
+        tkExtra.Balloon.set(self.stockZmin, _("Z minimum"))
+        self.addWidget(self.stockZmin)
+
+        col += 1
+        self.stockZmax = tkExtra.FloatEntry(lframe, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, width=5)
+        self.stockZmax.grid(row=row, column=col, sticky=EW)
+        tkExtra.Balloon.set(self.stockZmax, _("Z maximum"))
+        self.addWidget(self.stockZmax)
+
+        # --- Update button ---
+        row += 1
+        col = 1
+        bRefresh = Button(lframe, text=_("Update"), compound=LEFT, command=self.updateStockSize, image=Utils.icons["refresh"], padx=2, pady=1)
+        bRefresh.grid(row=row, column=col, columnspan=2, sticky=EW)
+        self.addWidget(bRefresh)
+
+        lframe.grid_columnconfigure(1, weight=1)
+        lframe.grid_columnconfigure(2, weight=1)
+
+        # --- End Mill data ---
+
+        lframe = LabelFrame(self.simPanel, text=_("End Mill"), foreground="DarkBlue", padx=5)
+        lframe.pack(side='top', fill='x', pady=10)
+        self.millType = tkinter.OptionMenu(lframe, self.canvas.millType, "Flat", "Ball")
+        #self.millType = tkExtra.Combobox(lframe, True, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, textvariable=self.canvas.millType)
+        #self.millType.fill(["Flat", "Ball"])
+        #self.millType.set("Flat")
+        self.millType.pack(side='top', fill='x')
+        tkExtra.Balloon.set(self.millType, _("Type of End Mill"))
+
+        lineFrame = Frame(lframe)
+        lineFrame.pack(side='top', fill='x', pady=10)
+
+        Label(lineFrame, text=_("Diameter:")).pack(side='left')
+        self.millDiameter = tkExtra.FloatEntry(lineFrame, background=tkExtra.GLOBAL_CONTROL_BACKGROUND, width=10, textvariable=self.canvas.millDiameter)
+        self.millDiameter.pack(side='left', fill='x', expand=True, padx=5)
+        tkExtra.Balloon.set(self.millDiameter, _("Mill Diameter"))
+        self.addWidget(self.millDiameter)
+
+        Label(self.simPanel, text=_("Opacity:")).pack(side='top', fill='x')
+
+        Scale(
+            self.simPanel,
+            from_=0,
+            to=100,
+            resolution=1,
+            variable=self.canvas.stockOpacity,
+            orient='horizontal',
+            command=self.changeStockOpacity
+        ).pack(side='top', fill='x')
+
+        self.millSelectedPathsOnly = Checkbutton(self.simPanel, text=_("Mill selected paths only"), variable=self.canvas.millSelectedPathsOnly)
+        self.millSelectedPathsOnly.pack(side='top', fill='x', pady=10)
+
+        b = Button(self.simPanel, text=_("Run simulation"), compound=LEFT, command=self.canvas.runSimulation, image=Utils.icons["start"], padx=2, pady=1)
+        b.pack(side='top', fill='x', pady=10)
+
+        self.grid_rowconfigure(1, weight=1)
+        self.grid_columnconfigure(1, weight=1)
+
+    def changeStockOpacity(self, value):
+        self.canvas.queueDraw()
+    # ----------------------------------------------------------------------
+    def updateStockSize(self):
+        try:
+            xmin = float(self.stockXmin.get())
+            xmax = float(self.stockXmax.get())
+            ymin = float(self.stockYmin.get())
+            ymax = float(self.stockYmax.get())
+            zmin = float(self.stockZmin.get())
+            zmax = float(self.stockZmax.get())
+        except:
+            messagebox.showinfo("Warning", "Please fill in all the stock dimensions")
+            return
+        
+        if xmax <= xmin:
+            messagebox.showinfo("Warning", "Xmax must be greater than Xmin")
+            return
+        
+        if ymax <= ymin:
+            messagebox.showinfo("Warning", "Ymax must be greater than Ymin")
+            return
+        
+        if zmax <= zmin:
+            messagebox.showinfo("Warning", "Zmax must be greater than Zmin")
+            return
+        
+        global STOCK_MIN_X, STOCK_MAX_X, STOCK_MIN_Y, STOCK_MAX_Y, STOCK_MIN_Z, STOCK_MAX_Z
+
+        STOCK_MIN_X = xmin
+        STOCK_MAX_X = xmax
+        STOCK_MIN_Y = ymin
+        STOCK_MAX_Y = ymax
+        STOCK_MIN_Z = zmin
+        STOCK_MAX_Z = zmax
+
+        self.canvas.resetStock()
+        self.canvas.fit2Screen()
     # ----------------------------------------------------------------------
     def addWidget(self, widget):
         self.app.widgets.append(widget)
@@ -4086,6 +4831,30 @@ class CanvasFrame(Frame):
         AXES_TEXT_COLOR = Utils.getStr("Color", "canvas.axestext", DEFAULT_AXES_TEXT_COLOR)
         RAPID_COLOR = Utils.getStr("Color", "canvas.rapid", DEFAULT_RAPID_COLOR)
 
+    def loadMillConfig(self):
+        global MILL_TYPE, MILL_DIAMETER
+
+        self.stockXmin.set(Utils.getFloat("Simulation", "xmin", STOCK_MIN_X))
+        self.stockXmax.set(Utils.getFloat("Simulation", "xmax", STOCK_MAX_X))
+        self.stockYmin.set(Utils.getFloat("Simulation", "ymin", STOCK_MIN_Y))
+        self.stockYmax.set(Utils.getFloat("Simulation", "ymax", STOCK_MAX_Y))
+        self.stockZmin.set(Utils.getFloat("Simulation", "zmin", STOCK_MIN_Z))
+        self.stockZmax.set(Utils.getFloat("Simulation", "zmax", STOCK_MAX_Z))
+
+        self.canvas.millType.set(Utils.getStr("Simulation", "milltype", "Flat"))
+        if self.canvas.millType.get() == '':
+            self.canvas.millType.set("Flat")
+
+        self.canvas.millDiameter.set(Utils.getFloat("Simulation", "milldiameter", 6.0))
+        if self.canvas.millDiameter.get() == 0:
+            self.canvas.millDiameter.set(6.0)
+
+        self.canvas.stockOpacity.set(Utils.getInt("Simulation", "stockopacity", 100))
+        if self.canvas.stockOpacity.get() == 0:
+            self.canvas.stockOpacity.set(100)
+
+        self.updateStockSize()
+
     # ----------------------------------------------------------------------
     def saveConfig(self):
         Utils.setInt("Canvas", "drawtime", DRAW_TIME)
@@ -4103,6 +4872,19 @@ class CanvasFrame(Frame):
 
         for c in customColors:
             Utils.setStr("Color", c, globals()[customColors[c]["color"]])
+
+
+        Utils.addSection("Simulation")
+        
+        Utils.setFloat("Simulation", "xmin", self.stockXmin.get())
+        Utils.setFloat("Simulation", "xmax", self.stockXmax.get())
+        Utils.setFloat("Simulation", "ymin", self.stockYmin.get())
+        Utils.setFloat("Simulation", "ymax", self.stockYmax.get())
+        Utils.setFloat("Simulation", "zmin", self.stockZmin.get())
+        Utils.setFloat("Simulation", "zmax", self.stockZmax.get())
+        Utils.setStr("Simulation", "milltype", self.canvas.millType.get())
+        Utils.setFloat("Simulation", "millDiameter", self.canvas.millDiameter.get())
+        Utils.setInt("Simulation", "stockopacity", self.canvas.stockOpacity.get())
 
     # ----------------------------------------------------------------------
     # Canvas toolbar FIXME XXX should be moved to CNCCanvas
@@ -4277,6 +5059,17 @@ class CanvasFrame(Frame):
         tkExtra.Balloon.set(b, _("Set Canvas colors"))
         b.pack(side=LEFT)
 
+        if self.canvas.glslVersion == "1.20":
+            b = Checkbutton(
+                toolbar,
+                image=Utils.icons["sim"],
+                indicatoron=False,
+                variable=self.show_sim,
+                command=self.showSim
+            )
+            tkExtra.Balloon.set(b, _("Show 3D simulation"))
+            b.pack(side=LEFT)
+
         # -----------
         self.drawTime = tkExtra.Combobox(
             toolbar, width=3, background="White", command=self.drawTimeChange
@@ -4288,6 +5081,25 @@ class CanvasFrame(Frame):
         self.drawTime.pack(side=RIGHT)
         Label(toolbar, text=_("Timeout:")).pack(side=RIGHT)
 
+    def showSim(self, value = None):
+        if value is not None:
+            self.canvas.set_mode(value)
+            return
+        
+        if self.show_sim.get() == True:
+            self.canvas.set_mode(CNCCanvas.MODE_SIM)
+            self.simPanel.grid(row=1, column=0, sticky=NSEW)
+
+            if self.first_time_sim_shown:
+                self.loadMillConfig()
+                self.first_time_sim_shown = False
+
+        else:
+            self.canvas.set_mode(CNCCanvas.MODE_CNC)
+            self.simPanel.grid_forget()
+
+        self.canvas.queueDraw()
+        
     # ----------------------------------------------------------------------
     def redraw(self, event=None):
         self.canvas.reset()

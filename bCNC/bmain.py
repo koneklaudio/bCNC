@@ -8,6 +8,7 @@ import os
 import socket
 import sys
 import time
+from tkinter.ttk import Notebook
 import traceback
 import webbrowser
 from datetime import datetime
@@ -49,6 +50,10 @@ from tkinter import (
     PanedWindow,
     messagebox,
 )
+
+from glm import exp
+
+from bCNC import ColorCanvas, SimCanvas
 
 try:
     import serial
@@ -150,6 +155,8 @@ class Application(Tk, Sender):
         tkinter.CallWrapper = Utils.CallWrapper
         tkExtra.bindClasses(self)
 
+        self.openglContext = None # Point to the GLCanvas object owning the context
+
         photo = PhotoImage(file=f"{Utils.prgpath}/bCNC.png")
         self.iconphoto(True, photo)
         self.title(f"{Utils.__prg__} {__version__} {__platform_fingerprint__}")
@@ -229,13 +236,17 @@ class Application(Tk, Sender):
         self.widgets.append(self.command)
 
         # --- Right side ---
+        # Canvas Frame. Contains both CNCCanvas and SimCanvas Pages
         frame = Frame(self.paned)
         self.paned.add(frame)
 
-        # --- Canvas ---
-        self.canvasFrame = CNCCanvas.CanvasFrame(frame, self)
-        self.canvasFrame.pack(side=TOP, fill=BOTH, expand=YES)
-        # XXX FIXME do I need the self.canvas?
+        self.canvasContainer = Frame(frame)
+        self.canvasContainer.pack(side='top', expand=True, fill='both')
+
+        # --- 3D Canvas ---
+        self.canvasFrame = CNCCanvas.CanvasFrame(self.canvasContainer, self)
+        self.canvasFrame.pack(fill='both', expand=True)
+        
         self.canvas = self.canvasFrame.canvas
 
         # fist create Pages

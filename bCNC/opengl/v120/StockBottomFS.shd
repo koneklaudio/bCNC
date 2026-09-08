@@ -1,0 +1,30 @@
+#version 120
+
+uniform vec3 light1dir;
+uniform vec3 light2dir;
+uniform float opacity;
+
+uniform sampler2D heightMap;
+
+uniform vec3 stockMin;
+
+varying vec2 uv;
+
+void main() {
+    float z = texture2D(heightMap, uv).r;
+
+    if (z <= stockMin.z)
+    {
+        discard;
+    }
+
+    vec3 normal = vec3(0, 0, -1.);
+    
+    vec3 baseColor = vec3(0.82, 0.50, 0.19);
+
+    float diffuse = abs((dot(normal, light1dir) + dot(normal, light2dir)) / 2.);
+
+    float lighting = 0.25 + 0.75 * diffuse;
+
+    gl_FragColor = vec4(baseColor * lighting, opacity);
+}
