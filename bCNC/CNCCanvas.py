@@ -61,7 +61,9 @@ from tkinter import (
     OptionMenu,
     Toplevel,
     LabelFrame,
-    messagebox
+    Variable,
+    messagebox,
+    Scale
 )
 import tkinter
 
@@ -134,8 +136,8 @@ AXES_TEXT_COLOR = DEFAULT_AXES_TEXT_COLOR = "Black"
 RAPID_COLOR = DEFAULT_RAPID_COLOR = ""
 customColors = {
     "canvas.gantry": {"color": "GANTRY_COLOR", "description": "Gantry", "canBeBlank": False},
-    "canvas.margin": {"color": "MARGIN_COLOR", "description": "Margin", "canBeBlank": False},
-    "canvas.grid": {"color": "GRID_COLOR", "description": "Grid", "canBeBlank": False},
+    "canvas.margin": {"color": "MARGIN_COLOR", "description": "Margin (Requires Redraw)", "canBeBlank": False},
+    "canvas.grid": {"color": "GRID_COLOR", "description": "Grid (Requires Redraw)", "canBeBlank": False},
     "canvas.enable": {"color": "ENABLE_COLOR", "description": "Enabled Path (Requires Redraw)", "canBeBlank": False},
     "canvas.disable": {"color": "DISABLE_COLOR", "description": "Disabled Path", "canBeBlank": False},
     "canvas.select": {"color": "SELECT_COLOR", "description": "Selected Active", "canBeBlank": False},
@@ -212,13 +214,13 @@ openglFolder = f"{os.path.abspath(os.path.dirname(__file__))}{os.sep}opengl{os.s
 
 # Simulator variables
 HEIGHTMAP_RES = 10000
-MESH_RES = 2
+MESH_RES = 1000
 STOCK_MIN_X = 0
 STOCK_MAX_X = 100
 STOCK_MIN_Y = 0
 STOCK_MAX_Y = 100
-STOCK_MIN_Z = 0.
-STOCK_MAX_Z = 20.
+STOCK_MIN_Z = -10.
+STOCK_MAX_Z = 0.
 MILL_TYPES = {"Flat": 0, "Ball": 1}
 MILL_DIAMETER = 6.
 
@@ -266,6 +268,20 @@ class CNCCanvas(GLCanvas):
         self._gl_initialized_sim = False
 
         self.windowing_system = self.app.call('tk', 'windowingsystem')
+        version = self.app.call("info", "patchlevel")
+        
+        # On MacOS / tk <=8.6, swap middle and right mouse buttons
+        aqua = self.windowing_system == "aqua"
+        major, minor, *_ = map(int, version.split("."))
+        old_aqua = aqua and (major, minor) < (8, 7)
+        if old_aqua:
+            button_mid = "3"
+            button_right = "2"
+        else:
+            button_mid = "2"
+            button_right = "3"
+        
+        # GLSL Version
         self.glslVersion = None
 
         # Canvas binding
@@ -276,16 +292,16 @@ class CNCCanvas(GLCanvas):
         self.bind("<ButtonRelease-1>", self.release)
         self.bind("<Double-1>", self.double)
 
-        self.bind("<Button-2>", self.midClick)
-        self.bind("<Shift-B2-Motion>", self.midZoom)
-        self.bind("<B2-Motion>", self.pan)
-        self.bind("<ButtonRelease-2>", self.midRelease)
+        self.bind("<Button-" + button_mid + ">", self.midClick)
+        self.bind("<Shift-B" + button_mid + "-Motion>", self.midZoom)
+        self.bind("<B" + button_mid + "-Motion>", self.pan)
+        self.bind("<ButtonRelease-" + button_mid + ">", self.midRelease)
         self.bind("<Button-4>", self.mouseZoomIn)
         self.bind("<Button-5>", self.mouseZoomOut)
         self.bind("<MouseWheel>", self.wheel)
-        self.bind("<Button-3>", self.rightClick)
-        self.bind("<B3-Motion>", self.rotate)
-        self.bind("<ButtonRelease-3>", self.rightRelease)
+        self.bind("<Button-" + button_right + ">", self.rightClick)
+        self.bind("<B" + button_right + "-Motion>", self.rotate)
+        self.bind("<ButtonRelease-" + button_right + ">", self.rightRelease)
 
         self.bind("<Shift-Button-4>", self.panLeft)
         self.bind("<Shift-Button-5>", self.panRight)
@@ -442,19 +458,11 @@ class CNCCanvas(GLCanvas):
 
         self.initPosition()
 
-        # Lines for debugging
-        """
-        probe = self.app.gcode.probe
-        probe.start = True
-        probe.makeMatrix()
-        probe.points = []
-        probe.add(0, 0, 3.7)
-        probe.add(100, 100, -2.2)
-        """
-
         # Milling vars
-        self.millType = StringVar()
-        self.millDiameter = DoubleVar()
+        self.millType = StringVar(value="Flat")
+        self.millDiameter = DoubleVar(value=6.0)
+        self.stockOpacity = IntVar(value=100)
+        self.millSelectedPathsOnly = BooleanVar(value=False)
     
     def set_mode(self, mode):
         if mode == self.mode:
@@ -465,7 +473,7 @@ class CNCCanvas(GLCanvas):
         if mode == CNCCanvas.MODE_SIM:
             self.initGL()
 
-        self.queueDraw()
+        self.fit2Screen()
     
     def get_camera_image(self):
         if (self.camera.image is None) or (cv is None):
@@ -2659,17 +2667,34 @@ class CNCCanvas(GLCanvas):
         
         upVector = inverse(self.MVMatrix) * vec4(0, 1, 0, 0)
         depthVector = inverse(self.MVMatrix) * vec4(0, 0, 1, 0)
+
+        # If we are in SIM mode, include the stock cube in the model dimensions
+        if self.mode == CNCCanvas.MODE_SIM:
+            minx = min(self._modelCenter.x - self._modelSize / 2., STOCK_MIN_X)
+            maxx = max(self._modelCenter.x + self._modelSize / 2., STOCK_MAX_X)
+            miny = min(self._modelCenter.y - self._modelSize / 2., STOCK_MIN_Y)
+            maxy = max(self._modelCenter.y + self._modelSize / 2., STOCK_MAX_Y)
+            minz = min(self._modelCenter.z - self._modelSize / 2., STOCK_MIN_Z)
+            maxz = max(self._modelCenter.z + self._modelSize / 2., STOCK_MAX_Z)
+
+            modelSize = math.sqrt(pow(maxx - minx, 2.) + pow(maxy - miny, 2.) + pow(maxz - minz, 2.))
+            modelCenter = vec3((maxx + minx) / 2., (maxy + miny) / 2., (maxz + minz) / 2.)
+        
+        else:
+            modelSize = self._modelSize
+            modelCenter = self._modelCenter
+
         
         self.MVMatrix = lookAt(
-            self._modelCenter + depthVector.xyz, # eye
-            self._modelCenter, # target
+            modelCenter + depthVector.xyz, # eye
+            modelCenter, # target
             upVector.xyz # up
             )
         # Adjust the Projection Matrix
         width = self.winfo_width()
         height = self.winfo_height()
         
-        self.zoom = min(width, height) / self._modelSize
+        self.zoom = min(width, height) / modelSize
         
         self.PMatrix = ortho(-width / 2.0 / self.zoom, 
                              width / 2.0 / self.zoom, 
@@ -3122,7 +3147,7 @@ class CNCCanvas(GLCanvas):
         glEnable(GL_DEPTH_TEST)
         glDepthFunc(GL_LEQUAL)
         glEnable(GL_BLEND)
-        glEnable(GL_LINE_SMOOTH)
+        glDisable(GL_LINE_SMOOTH)
         glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)
         
         # Draw background
@@ -3186,9 +3211,9 @@ class CNCCanvas(GLCanvas):
         if self.mode == CNCCanvas.MODE_SIM:
             # Draw stock material
             glDisable(GL_CULL_FACE)
-            glDisable(GL_DEPTH_TEST)
-            self.drawStockTop()
+            glEnable(GL_DEPTH_TEST)
             self.drawStockBottom()
+            self.drawStockTop()
             self.drawStockSide(1)
             self.drawStockSide(2)
             self.drawStockSide(3)
@@ -4312,7 +4337,7 @@ class CNCCanvas(GLCanvas):
         glUniform3f(glGetUniformLocation(self.stockTopProgram, "stockMin"), STOCK_MIN_X, STOCK_MIN_Y, STOCK_MIN_Z)
         glUniform3f(glGetUniformLocation(self.stockTopProgram, "stockMax"), STOCK_MAX_X, STOCK_MAX_Y, STOCK_MAX_Z)
         glUniform1f(glGetUniformLocation(self.stockTopProgram, "meshResolution"), MESH_RES)
-        glUniform1f(glGetUniformLocation(self.stockTopProgram, "opacity"), 0.5)
+        glUniform1f(glGetUniformLocation(self.stockTopProgram, "opacity"), self.stockOpacity.get() / 100.)
 
         uvmin, uvmax = self.getStockVisibleArea()
         glUniform2f(glGetUniformLocation(self.stockTopProgram, "uvmin"), uvmin.x, uvmin.y)
@@ -4350,7 +4375,7 @@ class CNCCanvas(GLCanvas):
 
         glUniform3f(glGetUniformLocation(self.stockBottomProgram, "stockMin"), STOCK_MIN_X, STOCK_MIN_Y, STOCK_MIN_Z)
         glUniform3f(glGetUniformLocation(self.stockBottomProgram, "stockMax"), STOCK_MAX_X, STOCK_MAX_Y, STOCK_MAX_Z)
-        glUniform1f(glGetUniformLocation(self.stockBottomProgram, "opacity"), 0.5)
+        glUniform1f(glGetUniformLocation(self.stockBottomProgram, "opacity"), self.stockOpacity.get() / 100.)
 
         light1dir = normalize(inverse(MVP) * vec4(1.0, -0.25, -1.0, 0)).xyz
         light2dir = normalize(inverse(MVP) * vec4(-0.5, -0.125, -0.5, 0)).xyz
@@ -4400,7 +4425,7 @@ class CNCCanvas(GLCanvas):
 
         glUniform3f(glGetUniformLocation(self.stockSideProgram, "p1"), p1.x, p1.y, p1.z)
         glUniform3f(glGetUniformLocation(self.stockSideProgram, "p2"), p2.x, p2.y, p2.z)
-        glUniform1f(glGetUniformLocation(self.stockSideProgram, "opacity"), 0.5)
+        glUniform1f(glGetUniformLocation(self.stockSideProgram, "opacity"), self.stockOpacity.get() / 100.)
 
         light1dir = normalize(inverse(MVP) * vec4(1.0, -0.25, -1.0, 0)).xyz
         light2dir = normalize(inverse(MVP) * vec4(-0.5, -0.125, -0.5, 0)).xyz
@@ -4537,18 +4562,28 @@ class CNCCanvas(GLCanvas):
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
 
     def runSimulation(self):
-        self.resetStock()
+        if self.millType.get() == '':
+            return
+        
+        if self.millDiameter.get() == '':
+            return
 
         lines16 = numpy.reshape(self.pathVertices, (-1, 16))
 
         millType = MILL_TYPES[self.millType.get()]
+
         D = self.millDiameter.get()
 
         for line in lines16:
-            p1 = vec3(line[1:4])
-            p2 = vec3(line[9:12])
+            flags = int(line[7])
+
+            if flags & FLAG_ENABLED:
+                if not self.millSelectedPathsOnly.get() or ((flags & FLAG_SELECTED) != 0):                
+                    p1 = vec3(line[1:4])
+                    p2 = vec3(line[9:12])
         
-            self.millSegment(p1, p2, millType, D)
+                    self.millSegment(p1, p2, millType, D)
+
         self.queueDraw()
 
     def resetStock(self):
@@ -4584,6 +4619,7 @@ class CanvasFrame(Frame):
         self.draw_camera = BooleanVar()
         self.view = StringVar()
         self.show_sim = BooleanVar()
+        self.first_time_sim_shown = True
 
         self.loadConfig()
         self.view.trace_add('write', self.viewChange)
@@ -4606,7 +4642,7 @@ class CanvasFrame(Frame):
         
         self.simPanel = Frame(self, padx=5, pady=10)
 
-        lframe = LabelFrame(self.simPanel, text=_("Stock dimensions"), foreground="DarkBlue", padx=5)
+        lframe = LabelFrame(self.simPanel, text=_("Stock dimensions"), foreground="DarkBlue", padx=5, pady = 5)
         lframe.pack(side='top', fill='x')
 
         row, col = 0, 0
@@ -4694,12 +4730,29 @@ class CanvasFrame(Frame):
         tkExtra.Balloon.set(self.millDiameter, _("Mill Diameter"))
         self.addWidget(self.millDiameter)
 
+        Label(self.simPanel, text=_("Opacity:")).pack(side='top', fill='x')
+
+        Scale(
+            self.simPanel,
+            from_=0,
+            to=100,
+            resolution=1,
+            variable=self.canvas.stockOpacity,
+            orient='horizontal',
+            command=self.changeStockOpacity
+        ).pack(side='top', fill='x')
+
+        self.millSelectedPathsOnly = Checkbutton(self.simPanel, text=_("Mill selected paths only"), variable=self.canvas.millSelectedPathsOnly)
+        self.millSelectedPathsOnly.pack(side='top', fill='x', pady=10)
+
+        b = Button(self.simPanel, text=_("Run simulation"), compound=LEFT, command=self.canvas.runSimulation, image=Utils.icons["start"], padx=2, pady=1)
+        b.pack(side='top', fill='x', pady=10)
+
         self.grid_rowconfigure(1, weight=1)
         self.grid_columnconfigure(1, weight=1)
 
-        self.loadMillConfig()
-
-
+    def changeStockOpacity(self, value):
+        self.canvas.queueDraw()
     # ----------------------------------------------------------------------
     def updateStockSize(self):
         try:
@@ -4789,8 +4842,18 @@ class CanvasFrame(Frame):
         self.stockZmax.set(Utils.getFloat("Simulation", "zmax", STOCK_MAX_Z))
 
         self.canvas.millType.set(Utils.getStr("Simulation", "milltype", "Flat"))
+        if self.canvas.millType.get() == '':
+            self.canvas.millType.set("Flat")
 
         self.canvas.millDiameter.set(Utils.getFloat("Simulation", "milldiameter", 6.0))
+        if self.canvas.millDiameter.get() == 0:
+            self.canvas.millDiameter.set(6.0)
+
+        self.canvas.stockOpacity.set(Utils.getInt("Simulation", "stockopacity", 100))
+        if self.canvas.stockOpacity.get() == 0:
+            self.canvas.stockOpacity.set(100)
+
+        self.updateStockSize()
 
     # ----------------------------------------------------------------------
     def saveConfig(self):
@@ -4821,6 +4884,7 @@ class CanvasFrame(Frame):
         Utils.setFloat("Simulation", "zmax", self.stockZmax.get())
         Utils.setStr("Simulation", "milltype", self.canvas.millType.get())
         Utils.setFloat("Simulation", "millDiameter", self.canvas.millDiameter.get())
+        Utils.setInt("Simulation", "stockopacity", self.canvas.stockOpacity.get())
 
     # ----------------------------------------------------------------------
     # Canvas toolbar FIXME XXX should be moved to CNCCanvas
@@ -4995,15 +5059,16 @@ class CanvasFrame(Frame):
         tkExtra.Balloon.set(b, _("Set Canvas colors"))
         b.pack(side=LEFT)
 
-        b = Checkbutton(
-            toolbar,
-            image=Utils.icons["sim"],
-            indicatoron=False,
-            variable=self.show_sim,
-            command=self.showSim
-        )
-        tkExtra.Balloon.set(b, _("Show 3D simulation"))
-        b.pack(side=LEFT)
+        if self.canvas.glslVersion == "1.20":
+            b = Checkbutton(
+                toolbar,
+                image=Utils.icons["sim"],
+                indicatoron=False,
+                variable=self.show_sim,
+                command=self.showSim
+            )
+            tkExtra.Balloon.set(b, _("Show 3D simulation"))
+            b.pack(side=LEFT)
 
         # -----------
         self.drawTime = tkExtra.Combobox(
@@ -5024,6 +5089,11 @@ class CanvasFrame(Frame):
         if self.show_sim.get() == True:
             self.canvas.set_mode(CNCCanvas.MODE_SIM)
             self.simPanel.grid(row=1, column=0, sticky=NSEW)
+
+            if self.first_time_sim_shown:
+                self.loadMillConfig()
+                self.first_time_sim_shown = False
+
         else:
             self.canvas.set_mode(CNCCanvas.MODE_CNC)
             self.simPanel.grid_forget()
