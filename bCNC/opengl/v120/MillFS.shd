@@ -7,16 +7,21 @@ uniform vec3 pB;
 uniform float toolRadius;
 uniform int toolType;
 
-uniform vec2 workMin;
-uniform vec2 workMax;
+uniform vec3 workMin;
+uniform vec3 workMax;
 
 varying vec2 uv;
 
 void main()
 {
-    float oldHeight = texture2D(heightMap, uv).r;
+    // Height is stored in R and G channels, 8 bit each.
+    // The stock height resolution is (workMax-workMin) / 65536
+    
+    const vec2 unpackFactors = vec2(65280.0 / 65535.0, 255.0 / 65535.0);
+    float z_unit = dot(texture2D(heightMap, uv).rg, unpackFactors);
+    float oldHeight = mix(workMin.z, workMax.z, z_unit);
 
-    vec2 p = mix(workMin, workMax, uv);
+    vec2 p = mix(workMin.xy, workMax.xy, uv);
 
     float newHeight = oldHeight;
 
@@ -218,5 +223,13 @@ void main()
         newHeight = min(oldHeight, cutterZ);
     }
 
-    gl_FragColor = vec4(newHeight, 0., 0., 1.);
+    float newHeight_unit = (newHeight - workMin.z) / (workMax.z - workMin.z);
+    
+    newHeight_unit = clamp(newHeight_unit, 0.0, 1.0); // Avoid overflow
+
+    float val16 = floor(newHeight_unit * 65535. + 0.5);
+    float valH = floor(val16 / 256.);
+    float valL = val16 - valH * 256.;
+
+    gl_FragColor = vec4(valH / 255., valL/ 255., 0., 1.);
 }

@@ -5,6 +5,8 @@ uniform vec3 light2dir;
 uniform float opacity;
 
 uniform sampler2D heightMap;
+uniform float zmin;
+uniform float zmax;
 
 varying float s;
 varying float z;
@@ -14,27 +16,32 @@ uniform float side; // 1: up, 2: down, 3: left, 4: right
 void main() {
     float h;
     vec3 normal;
+    float z_unit;
+
+    const vec2 unpackFactors = vec2(65280.0 / 65535.0, 255.0 / 65535.0);
 
     if (side == 1)
     {
-        h = texture2D(heightMap, vec2(s, 1.0)).r;
+        z_unit = dot(texture2D(heightMap, vec2(s, 1.0)).rg, unpackFactors);
         normal = vec3(0., 1., 0.);
     }
     else if (side == 2)
     {
-        h = texture2D(heightMap, vec2(s, 0.0)).r;
+        z_unit = dot(texture2D(heightMap, vec2(s, 0.0)).rg, unpackFactors);
         normal = vec3(0., -1., 0.);
     }
     else if (side == 3)
     {
-        h = texture2D(heightMap, vec2(0.0, s)).r;
+        z_unit = dot(texture2D(heightMap, vec2(0.0, s)).rg, unpackFactors);
         normal = vec3(-1., 0., 0.);
     }
     else if (side == 4)
     {
-        h = texture2D(heightMap, vec2(1.0, s)).r;
+        z_unit = dot(texture2D(heightMap, vec2(1.0, s)).rg, unpackFactors);
         normal = vec3(1., 0., 0.);
     }
+
+    h = mix(zmin, zmax, z_unit);
 
     if (z > h)
     {

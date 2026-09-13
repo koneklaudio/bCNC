@@ -7,13 +7,16 @@ uniform float opacity;
 uniform sampler2D heightMap;
 
 uniform vec3 stockMin;
+uniform vec3 stockMax;
 
 varying vec2 uv;
 
 void main() {
-    float z = texture2D(heightMap, uv).r;
+    const vec2 unpackFactors = vec2(65280.0 / 65535.0, 255.0 / 65535.0);
 
-    if (z <= stockMin.z)
+    float z_unit = dot(texture2D(heightMap, uv).rg, unpackFactors);
+
+    if (z_unit <= 0)
     {
         discard;
     }

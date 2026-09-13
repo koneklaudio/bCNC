@@ -10,6 +10,8 @@ from numpy import deg2rad
 from tkinter_gl import GLCanvas
 
 import OpenGL
+
+from bCNC import ProgressDialog
 if sys.platform == 'linux':
     # PyOpenGL is broken with wayland:
     OpenGL.setPlatform('x11')
@@ -293,7 +295,8 @@ class CNCCanvas(GLCanvas):
         self.bind("<Double-1>", self.double)
 
         self.bind("<Button-" + button_mid + ">", self.midClick)
-        self.bind("<Shift-B" + button_mid + "-Motion>", self.midZoom)
+        self.bind("<Shift-B" + button_mid + "-Motion>", self.midRightZoom)
+        self.bind("<Shift-B" + button_right + "-Motion>", self.midRightZoom)
         self.bind("<B" + button_mid + "-Motion>", self.pan)
         self.bind("<ButtonRelease-" + button_mid + ">", self.midRelease)
         self.bind("<Button-4>", self.mouseZoomIn)
@@ -593,6 +596,18 @@ class CNCCanvas(GLCanvas):
         self.probeVBO = glGenBuffers(1)
         self.vectorVBO = glGenBuffers(1)
         self.gridVBO = glGenBuffers(1)
+
+        self.linesProgram_id = glGetAttribLocation(self.linesProgram, "id")
+        self.linesProgram_xyz = glGetAttribLocation(self.linesProgram, "xyz")
+        self.linesProgram_pos = glGetAttribLocation(self.linesProgram, "pos")
+        self.linesProgram_colorValue = glGetAttribLocation(self.linesProgram, "colorValue")
+        self.linesProgram_dashRatio = glGetAttribLocation(self.linesProgram, "dashRatio")
+        self.linesProgram_flags = glGetAttribLocation(self.linesProgram, "flags")
+        self.linesProgram_mvp = glGetUniformLocation(program=self.linesProgram, name="MVP")
+        self.linesProgram_zoom = glGetUniformLocation(program=self.linesProgram, name="zoom")
+        self.linesProgram_select_color = glGetUniformLocation(program=self.linesProgram, name="selectColor")
+        self.linesProgram_select2_color = glGetUniformLocation(program=self.linesProgram, name="select2Color")
+        self.linesProgram_disable_color = glGetUniformLocation(program=self.linesProgram, name="disableColor")
         
         # ----- TOOLPATH PROGRAM ------
         # Vertex Shader code
@@ -795,75 +810,26 @@ class CNCCanvas(GLCanvas):
         self.fbos = glGenFramebuffers(2)
 
         for i in range(2):
-            glBindTexture(
-                GL_TEXTURE_2D,
-                self.textures[i]
-            )
+            glBindTexture(GL_TEXTURE_2D, self.textures[i])
 
-            glTexParameteri(
-                GL_TEXTURE_2D,
-                GL_TEXTURE_MIN_FILTER,
-                GL_LINEAR
-            )
-
-            glTexParameteri(
-                GL_TEXTURE_2D,
-                GL_TEXTURE_MAG_FILTER,
-                GL_LINEAR
-            )
-
-            glTexParameteri(
-                GL_TEXTURE_2D,
-                GL_TEXTURE_WRAP_S,
-                GL_CLAMP_TO_EDGE
-            )
-
-            glTexParameteri(
-                GL_TEXTURE_2D,
-                GL_TEXTURE_WRAP_T,
-                GL_CLAMP_TO_EDGE
-            )
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0)
 
             # One-channel 32-bit floating point height.
-            glTexImage2D(
-                GL_TEXTURE_2D,
-                0,
-                GL_R32F,
-                HEIGHTMAP_RES,
-                HEIGHTMAP_RES,
-                0,
-                GL_RED,
-                GL_FLOAT,
-                None
-            )
-
-            glBindFramebuffer(
-                GL_FRAMEBUFFER,
-                self.fbos[i]
-            )
-
-            glFramebufferTexture2D(
-                GL_FRAMEBUFFER,
-                GL_COLOR_ATTACHMENT0,
-                GL_TEXTURE_2D,
-                self.textures[i],
-                0
-            )
-
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RG8, HEIGHTMAP_RES, HEIGHTMAP_RES, 0, GL_RG, GL_UNSIGNED_BYTE, None)
+            glBindFramebuffer(GL_FRAMEBUFFER, self.fbos[i])
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, self.textures[i], 0)
             glDrawBuffers([GL_COLOR_ATTACHMENT0])
 
             status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
 
             if status != GL_FRAMEBUFFER_COMPLETE:
-                raise RuntimeError(
-                    "Height FBO {} incomplete: {}".format(
-                        i,
-                        hex(status)
-                    )
-                )
+                raise RuntimeError("Height FBO {} incomplete: {}".format(i, hex(status)))
 
         glBindTexture(GL_TEXTURE_2D, 0)
-
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
 
         self.resetStock()
@@ -883,6 +849,15 @@ class CNCCanvas(GLCanvas):
 
         # Create a Vertex Buffer Object (VBO)
         self.millVBO = glGenBuffers(1)
+
+        self.millProgram_pos = glGetAttribLocation(self.millProgram, "pos")
+        self.millProgram_heightMap = glGetUniformLocation(self.millProgram, "heightMap")
+        self.millProgram_pA = glGetUniformLocation(self.millProgram, "pA")
+        self.millProgram_pB = glGetUniformLocation(self.millProgram, "pB")
+        self.millProgram_toolRadius = glGetUniformLocation(self.millProgram, "toolRadius")
+        self.millProgram_toolType = glGetUniformLocation(self.millProgram, "toolType")
+        self.millProgram_workMin = glGetUniformLocation(self.millProgram, "workMin")
+        self.millProgram_workMax = glGetUniformLocation(self.millProgram, "workMax")
 
         # We create the fixed fullscreen triangle for the milling texture rendering
         vertices = numpy.array([-1, -1, 3, -1, -1, 3], dtype=numpy.float32)
@@ -944,6 +919,18 @@ class CNCCanvas(GLCanvas):
 
         # Create a Vertex Buffer Object (VBO)
         self.stockSideVBO = glGenBuffers(1)
+
+        self.stockSideProgram_index = glGetAttribLocation(self.stockSideProgram, "index")
+        self.stockSideProgram_mvp = glGetUniformLocation(program=self.stockSideProgram, name="MVP")
+        self.stockSideProgram_heightMap = glGetUniformLocation(self.stockSideProgram, "heightMap")
+        self.stockSideProgram_side = glGetUniformLocation(self.stockSideProgram, "side")
+        self.stockSideProgram_zmin = glGetUniformLocation(self.stockSideProgram, "zmin")
+        self.stockSideProgram_zmax = glGetUniformLocation(self.stockSideProgram, "zmax")
+        self.stockSideProgram_p1 = glGetUniformLocation(self.stockSideProgram, "p1")
+        self.stockSideProgram_p2 = glGetUniformLocation(self.stockSideProgram, "p2")
+        self.stockSideProgram_opacity = glGetUniformLocation(self.stockSideProgram, "opacity")
+        self.stockSideProgram_light1dir = glGetUniformLocation(program=self.stockSideProgram, name="light1dir")
+        self.stockSideProgram_light2dir = glGetUniformLocation(program=self.stockSideProgram, name="light2dir")
 
         # Create the stock side vertex indices
         indices = numpy.array([1, 2, 3, 1, 3, 4], dtype=numpy.float32)
@@ -1756,6 +1743,7 @@ class CNCCanvas(GLCanvas):
             return
         
         self.configure(cursor=mouseCursor(ACTION_ROTATE))
+        self._mouseAction = ACTION_ROTATE
 
         RotAxis = normalize(vec4(event.y - self._y, event.x - self._x, 0, 0))
         
@@ -2469,6 +2457,17 @@ class CNCCanvas(GLCanvas):
         self.configure(cursor=mouseCursor(self.action))
 
     def rightRelease(self, event):
+        if self._mouseAction != ACTION_PAN and self._mouseAction != ACTION_ROTATE and self._mouseAction != ACTION_ZOOM:
+            newRotationCenter, pointType = self.snapPoint(vec2(event.x, event.y))
+
+            if newRotationCenter is not None:
+                RS = mat3x3(self.MVMatrix)
+                new_translation = -RS * newRotationCenter
+                self.MVMatrix[3] = vec4(new_translation, 1)
+
+                self.queueDraw()
+
+        self._mouseAction = None
         self.configure(cursor=mouseCursor(self.action))
 
     # ----------------------------------------------------------------------
@@ -2739,7 +2738,7 @@ class CNCCanvas(GLCanvas):
     # ----------------------------------------------------------------------
     # Zoom in/out with shift+midbutton
     # ----------------------------------------------------------------------
-    def midZoom(self, event):
+    def midRightZoom(self, event):
         if self._mouseAction != ACTION_ZOOM:
             self.configure(cursor=mouseCursor(ACTION_ZOOM))
             self._mouseAction = ACTION_ZOOM
@@ -3415,38 +3414,33 @@ class CNCCanvas(GLCanvas):
         glUseProgram(self.linesProgram)
         glBindBuffer(GL_ARRAY_BUFFER, vbo)
         PARAMETERS_PER_VERTEX = 8
-        glVertexAttribPointer(glGetAttribLocation(self.linesProgram, "id"), 1, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, None)
-        glVertexAttribPointer(glGetAttribLocation(self.linesProgram, "xyz"), 3, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(1*4))
-        glVertexAttribPointer(glGetAttribLocation(self.linesProgram, "pos"), 1, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(4*4))
-        glVertexAttribPointer(glGetAttribLocation(self.linesProgram, "colorValue"), 1, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(5*4))
-        glVertexAttribPointer(glGetAttribLocation(self.linesProgram, "dashRatio"), 1, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(6*4))
-        glVertexAttribPointer(glGetAttribLocation(self.linesProgram, "flags"), 1, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(7*4))
-        glEnableVertexAttribArray(glGetAttribLocation(self.linesProgram, "id"))
-        glEnableVertexAttribArray(glGetAttribLocation(self.linesProgram, "xyz"))
-        glEnableVertexAttribArray(glGetAttribLocation(self.linesProgram, "pos"))
-        glEnableVertexAttribArray(glGetAttribLocation(self.linesProgram, "colorValue"))
-        glEnableVertexAttribArray(glGetAttribLocation(self.linesProgram, "dashRatio"))
-        glEnableVertexAttribArray(glGetAttribLocation(self.linesProgram, "flags"))
+        glVertexAttribPointer(self.linesProgram_id, 1, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, None)
+        glVertexAttribPointer(self.linesProgram_xyz, 3, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(1*4))
+        glVertexAttribPointer(self.linesProgram_pos, 1, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(4*4))
+        glVertexAttribPointer(self.linesProgram_colorValue, 1, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(5*4))
+        glVertexAttribPointer(self.linesProgram_dashRatio, 1, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(6*4))
+        glVertexAttribPointer(self.linesProgram_flags, 1, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(7*4))
+        glEnableVertexAttribArray(self.linesProgram)
+        glEnableVertexAttribArray(self.linesProgram)
+        glEnableVertexAttribArray(self.linesProgram)
+        glEnableVertexAttribArray(self.linesProgram)
+        glEnableVertexAttribArray(self.linesProgram)
+        glEnableVertexAttribArray(self.linesProgram)
 
 
         MVP = self.PMatrix * self.MVMatrix
-        mv_loc = glGetUniformLocation(program=self.linesProgram, name="MVP")
-        glUniformMatrix4fv(mv_loc, 1, False, value_ptr(MVP))
+        glUniformMatrix4fv(self.linesProgram_mvp, 1, False, value_ptr(MVP))
 
-        zoom_loc = glGetUniformLocation(program=self.linesProgram, name="zoom")
-        glUniform1f(zoom_loc, self.zoom)
+        glUniform1f(self.linesProgram_zoom, self.zoom)
 
         select_color = vec3(self.rgb8(SELECT_COLOR))
-        select_color_loc = glGetUniformLocation(program=self.linesProgram, name="selectColor")
-        glUniform3fv(select_color_loc, 1, value_ptr(select_color))
+        glUniform3fv(self.linesProgram_select_color, 1, value_ptr(select_color))
 
         select2_color = vec3(self.rgb8(SELECT2_COLOR))
-        select2_color_loc = glGetUniformLocation(program=self.linesProgram, name="select2Color")
-        glUniform3fv(select2_color_loc, 1, value_ptr(select2_color))
+        glUniform3fv(self.linesProgram_select2_color, 1, value_ptr(select2_color))
 
         disable_color = vec3(self.rgb8(DISABLE_COLOR))
-        disable_color_loc = glGetUniformLocation(program=self.linesProgram, name="disableColor")
-        glUniform3fv(disable_color_loc, 1, value_ptr(disable_color))
+        glUniform3fv(self.linesProgram_disable_color, 1, value_ptr(disable_color))
 
 
 
@@ -4393,8 +4387,8 @@ class CNCCanvas(GLCanvas):
         glUseProgram(self.stockSideProgram)
         glBindBuffer(GL_ARRAY_BUFFER, self.stockSideVBO)
         PARAMETERS_PER_VERTEX = 1
-        glVertexAttribPointer(glGetAttribLocation(self.stockSideProgram, "index"), 1, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(0*4))
-        glEnableVertexAttribArray(glGetAttribLocation(self.stockSideProgram, "index"))
+        glVertexAttribPointer(self.stockSideProgram_index, 1, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(0*4))
+        glEnableVertexAttribArray(self.stockSideProgram_index)
 
         MVP = self.PMatrix * self.MVMatrix
         mv_loc = glGetUniformLocation(program=self.stockSideProgram, name="MVP")
@@ -4404,9 +4398,11 @@ class CNCCanvas(GLCanvas):
 
         glBindTexture(GL_TEXTURE_2D, self.textures[0])
 
-        glUniform1i(glGetUniformLocation(self.stockSideProgram, "heightMap"), 0)
+        glUniform1i(self.stockSideProgram_heightMap, 0)
+        glUniform1f(self.stockSideProgram_side, float(side))
+        glUniform1f(self.stockSideProgram_zmin, STOCK_MIN_Z)
+        glUniform1f(self.stockSideProgram_zmax, STOCK_MAX_Z)
 
-        glUniform1f(glGetUniformLocation(self.stockSideProgram, "side"), float(side))
 
         if side == 1:
             p1 = vec3(STOCK_MIN_X, STOCK_MAX_Y, STOCK_MIN_Z)
@@ -4423,15 +4419,15 @@ class CNCCanvas(GLCanvas):
         else:
             return
 
-        glUniform3f(glGetUniformLocation(self.stockSideProgram, "p1"), p1.x, p1.y, p1.z)
-        glUniform3f(glGetUniformLocation(self.stockSideProgram, "p2"), p2.x, p2.y, p2.z)
-        glUniform1f(glGetUniformLocation(self.stockSideProgram, "opacity"), self.stockOpacity.get() / 100.)
+        glUniform3f(self.stockSideProgram_p1, p1.x, p1.y, p1.z)
+        glUniform3f(self.stockSideProgram_p2, p2.x, p2.y, p2.z)
+        glUniform1f(self.stockSideProgram_opacity, self.stockOpacity.get() / 100.)
 
         light1dir = normalize(inverse(MVP) * vec4(1.0, -0.25, -1.0, 0)).xyz
         light2dir = normalize(inverse(MVP) * vec4(-0.5, -0.125, -0.5, 0)).xyz
         
-        glUniform3fv(glGetUniformLocation(program=self.stockSideProgram, name="light1dir"), 1, value_ptr(light1dir))
-        glUniform3fv(glGetUniformLocation(program=self.stockSideProgram, name="light2dir"), 1, value_ptr(light2dir))
+        glUniform3fv(self.stockSideProgram_light1dir, 1, value_ptr(light1dir))
+        glUniform3fv(self.stockSideProgram_light2dir, 1, value_ptr(light2dir))
 
         glDrawArrays(GL_TRIANGLES, 0, 6)
 
@@ -4468,7 +4464,7 @@ class CNCCanvas(GLCanvas):
 
         return vec2(uvminx, uvminy), vec2(uvmaxx, uvmaxy)
 
-    def millSegment(self, p1: vec3, p2: vec3, toolType: int, diameter: float):
+    def millSegment(self, p1: vec3, p2: vec3, toolType: int, toolRadius: float, updateParams: bool = True):
         """
         Single-pass, scissored milling update.
 
@@ -4478,11 +4474,24 @@ class CNCCanvas(GLCanvas):
         write oldHeight unchanged.
         """
 
+        glUseProgram(self.millProgram)
+
+        # Source height map.
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D, self.textures[0])
+
+        if updateParams: # Use False if these parameters did not change from the last call to millSegment, to reduce gpu load
+            glUniform1i(self.millProgram_heightMap, 0)
+            glUniform1f(self.millProgram_toolRadius, toolRadius)
+            glUniform1i(self.millProgram_toolType, toolType) # TODO: tool type as argument
+            glUniform3f(self.millProgram_workMin, STOCK_MIN_X, STOCK_MIN_Y, STOCK_MIN_Z)
+            glUniform3f(self.millProgram_workMax, STOCK_MAX_X, STOCK_MAX_Y, STOCK_MAX_Z)
+
         # Cutter bounding box in workpiece coordinates.
-        min_x = max(STOCK_MIN_X, min(p1.x - diameter / 2., p2.x - diameter / 2))
-        max_x = min(STOCK_MAX_X, max(p1.x + diameter / 2., p2.x + diameter / 2))
-        min_y = max(STOCK_MIN_Y, min(p1.y - diameter / 2., p2.y - diameter / 2))
-        max_y = min(STOCK_MAX_Y, max(p1.y + diameter / 2., p2.y + diameter / 2))
+        min_x = max(STOCK_MIN_X, min(p1.x - toolRadius, p2.x - toolRadius))
+        max_x = min(STOCK_MAX_X, max(p1.x + toolRadius, p2.x + toolRadius))
+        min_y = max(STOCK_MIN_Y, min(p1.y - toolRadius, p2.y - toolRadius))
+        max_y = min(STOCK_MAX_Y, max(p1.y + toolRadius, p2.y + toolRadius))
 
         if min_x >= max_x or min_y >= max_y:
             return
@@ -4520,24 +4529,13 @@ class CNCCanvas(GLCanvas):
         glDisable(GL_BLEND)
         glDisable(GL_CULL_FACE)
 
-        glUseProgram(self.millProgram)
-
-        # Source height map.
-        glActiveTexture(GL_TEXTURE0)
-        glBindTexture(GL_TEXTURE_2D, self.textures[0])
-
         glBindBuffer(GL_ARRAY_BUFFER, self.millVBO)
         PARAMETERS_PER_VERTEX = 2
-        glVertexAttribPointer(glGetAttribLocation(self.millProgram, "pos"), 2, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(0*4))
-        glEnableVertexAttribArray(glGetAttribLocation(self.millProgram, "pos"))
+        glVertexAttribPointer(self.millProgram_pos, 2, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(0*4))
+        glEnableVertexAttribArray(self.millProgram_pos)
 
-        glUniform1i(glGetUniformLocation(self.millProgram, "heightMap"), 0)
-        glUniform3f(glGetUniformLocation(self.millProgram, "pA"), p1.x, p1.y, p1.z)
-        glUniform3f(glGetUniformLocation(self.millProgram, "pB"), p2.x, p2.y, p2.z)
-        glUniform1f(glGetUniformLocation(self.millProgram, "toolRadius"), diameter / 2.)
-        glUniform1i(glGetUniformLocation(self.millProgram, "toolType"), toolType) # TODO: tool type as argument
-        glUniform2f(glGetUniformLocation(self.millProgram, "workMin"), STOCK_MIN_X, STOCK_MIN_Y)
-        glUniform2f(glGetUniformLocation(self.millProgram, "workMax"), STOCK_MAX_X, STOCK_MAX_Y)
+        glUniform3f(self.millProgram_pA, p1.x, p1.y, p1.z)
+        glUniform3f(self.millProgram_pB, p2.x, p2.y, p2.z)
 
         glDrawArrays(GL_TRIANGLES, 0, 3)
 
@@ -4547,10 +4545,12 @@ class CNCCanvas(GLCanvas):
         glDisable(GL_SCISSOR_TEST)
 
         # Copy the milled region to the source framebuffer
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, self.fbos[1])
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, self.fbos[0])
+        #glBindFramebuffer(GL_READ_FRAMEBUFFER, self.fbos[1])
+        #glBindFramebuffer(GL_DRAW_FRAMEBUFFER, self.fbos[0])
 
-        glBlitFramebuffer(
+        glBlitNamedFramebuffer(
+            self.fbos[1],
+            self.fbos[0],
             sx0, sy0,
             sx1, sy1,
             sx0, sy0,
@@ -4572,9 +4572,32 @@ class CNCCanvas(GLCanvas):
 
         millType = MILL_TYPES[self.millType.get()]
 
-        D = self.millDiameter.get()
+        toolRadius = self.millDiameter.get() / 2.
+
+        firstSegment = True
+
+        t = time.time()
+        tr = t + 0.5 # Time when we refresh
+
+        pd = ProgressDialog.ProgressDialog(self.app, "Calculating final shape...")
+        self.update_idletasks()
+        self.update()
+
+        l = 0
+        nl = len(lines16)
 
         for line in lines16:
+            if time.time() >= tr:
+                if pd.cancelled:
+                    break
+
+                pd.setProgress(l / nl * 100)
+
+                self.update_idletasks()
+                self.update()
+                self.queueDraw()
+                tr += 0.5
+
             flags = int(line[7])
 
             if flags & FLAG_ENABLED:
@@ -4582,9 +4605,18 @@ class CNCCanvas(GLCanvas):
                     p1 = vec3(line[1:4])
                     p2 = vec3(line[9:12])
         
-                    self.millSegment(p1, p2, millType, D)
+                    self.millSegment(p1, p2, millType, toolRadius, firstSegment)
+                    
+                    firstSegment = False
+            
+            l += 1
+        
+        pd.grab_release()
+        pd.destroy()
 
         self.queueDraw()
+    
+
 
     def resetStock(self):
         glDisable(GL_SCISSOR_TEST)
@@ -4593,13 +4625,48 @@ class CNCCanvas(GLCanvas):
 
         glViewport(0, 0, HEIGHTMAP_RES, HEIGHTMAP_RES)
 
-        #glClearBufferfv(GL_COLOR, 0, [STOCK_MAX_Z, 0.0, 0.0, 0.0])
-        glClearColor(STOCK_MAX_Z, 0.0, 0.0, 0.0)
+        # Reset the stock height (1.0 in the heightmap)
+        glClearColor(1.0, 1.0, 0.0, 0.0)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
 
         self.queueDraw()
+    
+    def is_raspberry_pi(self):
+        """
+        Detect if the app is running the app in a Pi, to disable Simulation
+        """
+        # 1. If it's not Linux, not a native Raspberry Pi
+        if not sys.platform.startswith('linux'):
+            return False
+            
+        # 2. If in Linux, find the model file
+        try:
+            model_path = '/sys/firmware/devicetree/base/model'
+            if os.path.exists(model_path):
+                with open(model_path, 'r', errors='ignore') as f:
+                    if 'raspberry pi' in f.read().lower():
+                        return True
+        except Exception:
+            pass # If not permission, go to Plan B
+            
+        # 3. Plan B: Check architecture and cpuinfo
+        try:
+            cpuinfo_path = '/proc/cpuinfo'
+            if os.path.exists(cpuinfo_path):
+                with open(cpuinfo_path, 'r') as f:
+                    cpuinfo = f.read().lower()
+                    if 'bcm2835' in cpuinfo or 'bcm2711' in cpuinfo or 'bcm2712' in cpuinfo:
+                        return True
+        except Exception:
+            pass
+
+        # 4. Plan C: Check Pi specific environment variables
+        if os.getenv('XDG_CURRENT_DESKTOP') == 'LXDE' and platform.machine() in ('armv7l', 'aarch64'):
+            return True
+
+        return False
 
 # =============================================================================
 # Canvas Frame with toolbar
@@ -4873,18 +4940,18 @@ class CanvasFrame(Frame):
         for c in customColors:
             Utils.setStr("Color", c, globals()[customColors[c]["color"]])
 
-
-        Utils.addSection("Simulation")
-        
-        Utils.setFloat("Simulation", "xmin", self.stockXmin.get())
-        Utils.setFloat("Simulation", "xmax", self.stockXmax.get())
-        Utils.setFloat("Simulation", "ymin", self.stockYmin.get())
-        Utils.setFloat("Simulation", "ymax", self.stockYmax.get())
-        Utils.setFloat("Simulation", "zmin", self.stockZmin.get())
-        Utils.setFloat("Simulation", "zmax", self.stockZmax.get())
-        Utils.setStr("Simulation", "milltype", self.canvas.millType.get())
-        Utils.setFloat("Simulation", "millDiameter", self.canvas.millDiameter.get())
-        Utils.setInt("Simulation", "stockopacity", self.canvas.stockOpacity.get())
+        if not self.first_time_sim_shown:
+            Utils.addSection("Simulation")
+            
+            Utils.setFloat("Simulation", "xmin", self.stockXmin.get())
+            Utils.setFloat("Simulation", "xmax", self.stockXmax.get())
+            Utils.setFloat("Simulation", "ymin", self.stockYmin.get())
+            Utils.setFloat("Simulation", "ymax", self.stockYmax.get())
+            Utils.setFloat("Simulation", "zmin", self.stockZmin.get())
+            Utils.setFloat("Simulation", "zmax", self.stockZmax.get())
+            Utils.setStr("Simulation", "milltype", self.canvas.millType.get())
+            Utils.setFloat("Simulation", "millDiameter", self.canvas.millDiameter.get())
+            Utils.setInt("Simulation", "stockopacity", self.canvas.stockOpacity.get())
 
     # ----------------------------------------------------------------------
     # Canvas toolbar FIXME XXX should be moved to CNCCanvas
@@ -5059,7 +5126,7 @@ class CanvasFrame(Frame):
         tkExtra.Balloon.set(b, _("Set Canvas colors"))
         b.pack(side=LEFT)
 
-        if self.canvas.glslVersion == "1.20":
+        if self.canvas.glslVersion == "1.20" and not self.canvas.is_raspberry_pi():
             b = Checkbutton(
                 toolbar,
                 image=Utils.icons["sim"],
@@ -5067,7 +5134,7 @@ class CanvasFrame(Frame):
                 variable=self.show_sim,
                 command=self.showSim
             )
-            tkExtra.Balloon.set(b, _("Show 3D simulation"))
+            tkExtra.Balloon.set(b, _("Show 3D simulation. --- REQUIRES ABOUT 500MB OF FREE GPU MEMORY ---"))
             b.pack(side=LEFT)
 
         # -----------

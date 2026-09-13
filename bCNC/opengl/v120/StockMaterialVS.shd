@@ -20,7 +20,9 @@ void main() {
 
     vec2 xy = mix(stockMin.xy, stockMax.xy, uv_);
 
-    z = texture2D(heightMap, uv_).r;
+    const vec2 unpackFactors = vec2(65280.0 / 65535.0, 255.0 / 65535.0);
+    float z_unit = dot(texture2D(heightMap, uv_).rg, unpackFactors);
+    z = mix(stockMin.z, stockMax.z, z_unit);
 
     vec2 deltaUV_ = (uvmax - uvmin) / (meshResolution - 1);
 
