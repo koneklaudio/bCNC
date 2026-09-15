@@ -4545,12 +4545,10 @@ class CNCCanvas(GLCanvas):
         glDisable(GL_SCISSOR_TEST)
 
         # Copy the milled region to the source framebuffer
-        #glBindFramebuffer(GL_READ_FRAMEBUFFER, self.fbos[1])
-        #glBindFramebuffer(GL_DRAW_FRAMEBUFFER, self.fbos[0])
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, self.fbos[1])
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, self.fbos[0])
 
-        glBlitNamedFramebuffer(
-            self.fbos[1],
-            self.fbos[0],
+        glBlitFramebuffer(
             sx0, sy0,
             sx1, sy1,
             sx0, sy0,
