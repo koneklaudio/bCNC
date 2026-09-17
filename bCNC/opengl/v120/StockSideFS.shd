@@ -22,7 +22,7 @@ void main() {
 
     if (side == 1)
     {
-        z_unit = dot(texture2D(heightMap, vec2(s, 1.0)).rg, unpackFactors);
+        z_unit = dot(texture2D(heightMap, vec2(1.0 - s, 1.0)).rg, unpackFactors);
         normal = vec3(0., 1., 0.);
     }
     else if (side == 2)
@@ -32,7 +32,7 @@ void main() {
     }
     else if (side == 3)
     {
-        z_unit = dot(texture2D(heightMap, vec2(0.0, s)).rg, unpackFactors);
+        z_unit = dot(texture2D(heightMap, vec2(0.0, 1.0 - s)).rg, unpackFactors);
         normal = vec3(-1., 0., 0.);
     }
     else if (side == 4)

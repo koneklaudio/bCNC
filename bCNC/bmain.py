@@ -147,7 +147,7 @@ geometry = None
 # Main Application window
 # =============================================================================
 class Application(Tk, Sender):
-    def __init__(self, **kw):
+    def __init__(self, enableSimulation = False, **kw):
         Tk.__init__(self, **kw)
         Sender.__init__(self)
 
@@ -244,7 +244,7 @@ class Application(Tk, Sender):
         self.canvasContainer.pack(side='top', expand=True, fill='both')
 
         # --- 3D Canvas ---
-        self.canvasFrame = CNCCanvas.CanvasFrame(self.canvasContainer, self)
+        self.canvasFrame = CNCCanvas.CanvasFrame(self.canvasContainer, self, enableSimulation = enableSimulation)
         self.canvasFrame.pack(fill='both', expand=True)
         
         self.canvas = self.canvasFrame.canvas

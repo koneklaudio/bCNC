@@ -36,6 +36,7 @@ def usage(rc):
     wrt("\t-s # | --serial #\tOpen serial port specified\n")
     wrt("\t-S\t\t\tDo not open serial port\n")
     wrt("\t--run\t\t\tDirectly run the file once loaded\n")
+    wrt("\t--enablesimulation\t\t\tEnable simulation (experimental)\n")
     wrt("\n")
     sys.exit(rc)
 
@@ -69,6 +70,7 @@ def main():
                 "serial=",
                 "baud=",
                 "run",
+                "enablesimulation"
             ],
         )
     except getopt.GetoptError:
@@ -77,6 +79,7 @@ def main():
     recent = None
     run = False
     fullscreen = False
+    enable_simulation = False
     for opt, val in optlist:
         if opt in ("-h", "-?", "--help"):
             usage(0)
@@ -149,8 +152,11 @@ def main():
 
         elif opt == "--run":
             run = True
+        
+        elif opt == "--enablesimulation":
+            enable_simulation = True
 
-    application = bmain.Application(className=f"  {Utils.__prg__}  ")
+    application = bmain.Application(className=f"  {Utils.__prg__}  ", enableSimulation = enable_simulation)
 
     palette = {"background": application.cget("background")}
 

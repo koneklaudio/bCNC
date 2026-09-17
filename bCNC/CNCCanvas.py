@@ -3,6 +3,7 @@
 # Author:       vvlachoudis@gmail.com
 # Date: 24-Aug-2014
 
+from gc import enable
 import math
 import time
 import sys
@@ -900,7 +901,7 @@ class CNCCanvas(GLCanvas):
         self.stockBottomVBO = glGenBuffers(1)
 
         # Create the stock bottom vertex indices
-        indices = numpy.array([1, 2, 3, 1, 3, 4], dtype=numpy.float32)
+        indices = numpy.array([1, 3, 2, 1, 4, 3], dtype=numpy.float32)
               
         glBindBuffer(GL_ARRAY_BUFFER, self.stockBottomVBO)     
         glBufferData(GL_ARRAY_BUFFER, indices.nbytes, indices, GL_STATIC_DRAW)
@@ -3211,8 +3212,9 @@ class CNCCanvas(GLCanvas):
             # Draw stock material
             glDisable(GL_CULL_FACE)
             glEnable(GL_DEPTH_TEST)
-            self.drawStockBottom()
+            glEnable(GL_BLEND)
             self.drawStockTop()
+            self.drawStockBottom()
             self.drawStockSide(1)
             self.drawStockSide(2)
             self.drawStockSide(3)
@@ -4405,14 +4407,14 @@ class CNCCanvas(GLCanvas):
 
 
         if side == 1:
-            p1 = vec3(STOCK_MIN_X, STOCK_MAX_Y, STOCK_MIN_Z)
-            p2 = vec3(STOCK_MAX_X, STOCK_MAX_Y, STOCK_MAX_Z)
+            p1 = vec3(STOCK_MAX_X, STOCK_MAX_Y, STOCK_MIN_Z)
+            p2 = vec3(STOCK_MIN_X, STOCK_MAX_Y, STOCK_MAX_Z)
         elif side == 2:
             p1 = vec3(STOCK_MIN_X, STOCK_MIN_Y, STOCK_MIN_Z)
             p2 = vec3(STOCK_MAX_X, STOCK_MIN_Y, STOCK_MAX_Z)
         elif side == 3:
-            p1 = vec3(STOCK_MIN_X, STOCK_MIN_Y, STOCK_MIN_Z)
-            p2 = vec3(STOCK_MIN_X, STOCK_MAX_Y, STOCK_MAX_Z)
+            p1 = vec3(STOCK_MIN_X, STOCK_MAX_Y, STOCK_MIN_Z)
+            p2 = vec3(STOCK_MIN_X, STOCK_MIN_Y, STOCK_MAX_Z)
         elif side == 4:
             p1 = vec3(STOCK_MAX_X, STOCK_MIN_Y, STOCK_MIN_Z)
             p2 = vec3(STOCK_MAX_X, STOCK_MAX_Y, STOCK_MAX_Z)
@@ -4670,9 +4672,10 @@ class CNCCanvas(GLCanvas):
 # Canvas Frame with toolbar
 # =============================================================================
 class CanvasFrame(Frame):
-    def __init__(self, master, app, *kw, **kwargs):
+    def __init__(self, master, app, enableSimulation = False, *kw, **kwargs):
         Frame.__init__(self, master, *kw, **kwargs)
         self.app = app
+        self.enableSimulation = enableSimulation
 
         self.draw_axes = BooleanVar()
         self.draw_grid = BooleanVar()
@@ -5124,7 +5127,7 @@ class CanvasFrame(Frame):
         tkExtra.Balloon.set(b, _("Set Canvas colors"))
         b.pack(side=LEFT)
 
-        if self.canvas.glslVersion == "1.20" and not self.canvas.is_raspberry_pi():
+        if self.enableSimulation and (self.canvas.glslVersion == "1.20") and (not self.canvas.is_raspberry_pi()):
             b = Checkbutton(
                 toolbar,
                 image=Utils.icons["sim"],

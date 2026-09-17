@@ -26,10 +26,14 @@ void main() {
 
     vec2 deltaUV_ = (uvmax - uvmin) / (meshResolution - 1);
 
-    float hL = texture2D(heightMap, uv_ - vec2(deltaUV_.x, 0.0)).r;
-    float hR = texture2D(heightMap, uv_ + vec2(deltaUV_.x, 0.0)).r;
-    float hD = texture2D(heightMap, uv_ - vec2(0.0, deltaUV_.y)).r;
-    float hU = texture2D(heightMap, uv_ + vec2(0.0, deltaUV_.y)).r;
+    z_unit = dot(texture2D(heightMap, uv_ - vec2(deltaUV_.x, 0.0)).rg, unpackFactors);
+    float hL = mix(stockMin.z, stockMax.z, z_unit);
+    z_unit = dot(texture2D(heightMap, uv_ + vec2(deltaUV_.x, 0.0)).rg, unpackFactors);
+    float hR = mix(stockMin.z, stockMax.z, z_unit);
+    z_unit = dot(texture2D(heightMap, uv_ - vec2(0.0, deltaUV_.y)).rg, unpackFactors);
+    float hD = mix(stockMin.z, stockMax.z, z_unit);
+    z_unit = dot(texture2D(heightMap, uv_ + vec2(0.0, deltaUV_.y)).rg, unpackFactors);
+    float hU = mix(stockMin.z, stockMax.z, z_unit);
 
     float dx = deltaUV_.x * (stockMax.x - stockMin.x);
     float dy = deltaUV_.y * (stockMax.y - stockMin.y);
