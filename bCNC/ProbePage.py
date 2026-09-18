@@ -41,7 +41,9 @@ from tkinter import (
     Spinbox,
     LabelFrame,
     messagebox,
-    Frame
+    Frame,
+    Entry,
+    Radiobutton
 )
 
 import Camera
@@ -1215,8 +1217,45 @@ class AutolevelFrame(CNCRibbon.PageFrame):
         lframe = LabelFrame(self, text=_("Autolevel"), foreground="DarkBlue")
         lframe.pack(side=TOP, fill=X)
 
+        Label(lframe, text=_("ZONES")).pack(side=TOP, fill=X)
+        self.zonesFrame = Frame(lframe)
+        self.zonesFrame.pack(side=TOP, fill=X)
+
+        # Zones Toolbar
+        toolbarFrame = Frame(self.zonesFrame)
+        toolbarFrame.pack(side=TOP, fill=X)
+
+        Button(toolbarFrame, image=Utils.icons["add"]).pack(side=LEFT, padx=5)
+
+        headersFrame = Frame(self.zonesFrame)
+        headersFrame.pack(side=TOP, fill=X)
+
+        Label(headersFrame, text=_("NAME")).grid(row=0, column=1)
+        Label(headersFrame, text=_("ACT")).grid(row=0, column=2)
+        Label(headersFrame, text=_("H/S")).grid(row=0, column=3)
+        Label(headersFrame, text=_("COL")).grid(row=0, column=4)
+
+        self.activeZone = IntVar(value=1)
+
+        for r in range(1, 4):
+            Radiobutton(headersFrame, variable=self.activeZone, value=r).grid(row=r, column=0)
+            Entry(headersFrame, text=_("NAME")).grid(row=r, column=1, sticky="NWES")
+            Checkbutton(headersFrame, image=Utils.icons["lamp"], indicatoron=False).grid(row=r, column=2)
+            Checkbutton(headersFrame, image=Utils.icons["view"], indicatoron=False).grid(row=r, column=3)
+            colorFrame = Frame(headersFrame, height=16, width=16)
+            colorFrame.grid(row=r, column=4)
+            colorFrame.pack_propagate(False)
+            Label(colorFrame, bg="red").pack(fill=BOTH, expand=True)
+
+            Button(headersFrame, image=Utils.icons["x"]).grid(row=r, column=5)
+                
+
+        headersFrame.grid_columnconfigure(1, weight=2, minsize=30, uniform="zoneColumns")
+        headersFrame.grid_columnconfigure([2, 3, 4, 5], minsize=35)
+
+
         frame1 = Frame(lframe)
-        frame1.pack(side=TOP, fill=X)
+        frame1.pack(side=TOP, fill=X, pady=15)
 
         row, col = 0, 0
         # Empty
@@ -1411,6 +1450,8 @@ class AutolevelFrame(CNCRibbon.PageFrame):
 
     # -----------------------------------------------------------------------
     def getMargins(self, event=None):
+        probe = self.app.gcode.probe
+        
         self.probeXmin.set(str(CNC.vars["xmin"]))
         self.probeXmax.set(str(CNC.vars["xmax"]))
         self.probeYmin.set(str(CNC.vars["ymin"]))
@@ -1425,7 +1466,7 @@ class AutolevelFrame(CNCRibbon.PageFrame):
             probe.xmin = float(self.probeXmin.get())
             probe.xmax = float(self.probeXmax.get())
             probe.xn = max(2, int(self.probeXbins.get()))
-            self.probeXstep["text"] = f"{probe.xstep():.5g}"
+            self.probeXstep["text"] = f"{probe.xstep:.5g}"
         except ValueError:
             self.probeXstep["text"] = ""
             if verbose:

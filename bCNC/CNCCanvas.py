@@ -4058,23 +4058,27 @@ class CNCCanvas(GLCanvas):
             self.queueDraw()
             return
 
-        # Draw probe grid
         probe = self.gcode.probe
-        for x in bmath.frange(probe.xmin, probe.xmax + 0.00001, probe.xstep()):
-            xyz = [(x, probe.ymin, 0.0), (x, probe.ymax, 0.0)]
-            item = self.create_line(
-                self.probeDict,
-                xyz,
-                self.rgb8('Yellow'),
-                1.)
 
-        for y in bmath.frange(probe.ymin, probe.ymax + 0.00001, probe.ystep()):
-            xyz = [(probe.xmin, y, 0.0), (probe.xmax, y, 0.0)]
-            item = self.create_line(
-                self.probeDict,
-                xyz,
-                self.rgb8('Yellow'),
-                1.)
+        # Draw probe grid for all the zones
+        for zone in probe.zones:
+            probe.currentZone = zone
+
+            for x in bmath.frange(probe.xmin, probe.xmax + 0.00001, probe.xstep):
+                xyz = [(x, probe.ymin, 0.0), (x, probe.ymax, 0.0)]
+                item = self.create_line(
+                    self.probeDict,
+                    xyz,
+                    self.rgb8(zone.color),
+                    1.)
+
+            for y in bmath.frange(probe.ymin, probe.ymax + 0.00001, probe.ystep):
+                xyz = [(probe.xmin, y, 0.0), (probe.xmax, y, 0.0)]
+                item = self.create_line(
+                    self.probeDict,
+                    xyz,
+                    self.rgb8(zone.color),
+                    1.)
         
         self.update_lines_buffer(self.probeVBO, self.probeDict)
 
@@ -4082,7 +4086,7 @@ class CNCCanvas(GLCanvas):
         self.updateProbeText()
 
         # Draw image map if numpy exists
-        if (numpy is not None and probe.matrix):
+        if ((numpy is not None) and (not probe.isEmpty())):
             self.update_probe_map_buffer()
 
         self.queueDraw()
@@ -4090,14 +4094,28 @@ class CNCCanvas(GLCanvas):
     def updateProbeText(self):
         probe = self.gcode.probe
 
-        if probe.matrix:
+        if not probe.isEmpty():
             self.probeText = {}
-            for i, location in enumerate(probe.points):
-                item = self.create_text(
-                    self.probeText,
-                    vec3(location[0], location[1], location[2] * self.probeMapHeightScale),
-                    f"{probe.points[i][2]:.{CNC.digits}f}",
-                    self.rgb8(PROBE_TEXT_COLOR))
+            for zone in probe.zones:
+                probe.currentZone = zone
+
+                for j in range(probe.yn):
+                    for i in range(probe.xn):
+                        if (zone.pointStatus[i, j] == 1): # Probed point
+                            item = self.create_text(
+                                self.probeText,
+                                vec3(probe.xmin + i * probe.xstep, probe.ymin + j * probe.ystep, zone.dz[i, j] * self.probeMapHeightScale),
+                                f"{zone.dz[i, j]:.{CNC.digits}f}",
+                                self.rgb8(PROBE_TEXT_COLOR))        
+
+                """
+                for i, location in enumerate(probe.points):
+                    item = self.create_text(
+                        self.probeText,
+                        vec3(location[0], location[1], location[2] * self.probeMapHeightScale),
+                        f"{probe.points[i][2]:.{CNC.digits}f}",
+                        self.rgb8(PROBE_TEXT_COLOR))
+                """
 
             self.update_text_buffer(self.ProbeTextVBO, self.probeText)
 
@@ -4138,57 +4156,56 @@ class CNCCanvas(GLCanvas):
     def update_probe_map_buffer(self):
         probe = self.gcode.probe
 
-        probeMaxZ = numpy.max(probe.matrix)
-        probeMinZ = numpy.min(probe.matrix)
-
         probeMapData = []
 
-        # Get matrix size and steps (based on the matrix size, not on the last xn and yn input in the ProbePage widgets. 
-        # The matrix size will match xn and yn when probe data is loaded or scan is performed)
-        m = len(probe.matrix[0])
-        n = len(probe.matrix)
-        mstep = (probe.xmax - probe.xmin) / (m - 1)
-        nstep = (probe.ymax - probe.ymin) / (n - 1)
+        for zone in probe.zones:
+            probe.currentZone = zone
+            # Get extreme values of grid points where the point was probed (pointStatus == 1)
+            probeMaxZ = zone.z[zone.pointStatus == 1].max()
+            probeMinZ = zone.z[zone.pointStatus == 1].min()
+            
+            mstep = probe.xstep
+            nstep = probe.ystep
 
-        # Each quad of the map is drawn as two triangles (6 vertices)
-        for j in range(n - 1):
-            for i in range(m - 1):
-                color1 = self.blue2red(probe.matrix[j][i], probeMinZ, probeMaxZ)
-                color2 = self.blue2red(probe.matrix[j][i + 1], probeMinZ, probeMaxZ)
-                color3 = self.blue2red(probe.matrix[j + 1][i + 1], probeMinZ, probeMaxZ)
-                color4 = self.blue2red(probe.matrix[j + 1][i], probeMinZ, probeMaxZ)
-                probeMapData.extend([
-                    # Corner 1
-                    probe.xmin + i * mstep,
-                    probe.ymin + j * nstep,
-                    probe.matrix[j][i],
-                    (int(color1.x) << 16) + (int(color1.y) << 8) + int(color1.z),
-                    # Corner 2
-                    probe.xmin + (i + 1) * mstep,
-                    probe.ymin + j * nstep,
-                    probe.matrix[j][i + 1],
-                    (int(color2.x) << 16) + (int(color2.y) << 8) + int(color2.z),
-                    # Corner 3
-                    probe.xmin + (i + 1) * mstep,
-                    probe.ymin + (j + 1) * nstep,
-                    probe.matrix[j + 1][i + 1],
-                    (int(color3.x) << 16) + (int(color3.y) << 8) + int(color3.z),
-                    # Corner 1
-                    probe.xmin + i * mstep,
-                    probe.ymin + j * nstep,
-                    probe.matrix[j][i],
-                    (int(color1.x) << 16) + (int(color1.y) << 8) + int(color1.z),
-                    # Corner 3
-                    probe.xmin + (i + 1) * mstep,
-                    probe.ymin + (j + 1) * nstep,
-                    probe.matrix[j + 1][i + 1],
-                    (int(color3.x) << 16) + (int(color3.y) << 8) + int(color3.z),
-                    # Corner 4
-                    probe.xmin + i * mstep,
-                    probe.ymin + (j + 1) * nstep,
-                    probe.matrix[j + 1][i],
-                    (int(color4.x) << 16) + (int(color4.y) << 8) + int(color4.z),
-                ])
+            # Each quad of the map is drawn as two triangles (6 vertices)
+            for j in range(probe.yn - 1):
+                for i in range(probe.xn - 1):
+                    color1 = self.blue2red(zone.z[i, j], probeMinZ, probeMaxZ)
+                    color2 = self.blue2red(zone.z[i + 1, j], probeMinZ, probeMaxZ)
+                    color3 = self.blue2red(zone.z[i + 1, j + 1], probeMinZ, probeMaxZ)
+                    color4 = self.blue2red(zone.z[i, j + 1], probeMinZ, probeMaxZ)
+                    probeMapData.extend([
+                        # Corner 1
+                        probe.xmin + i * mstep,
+                        probe.ymin + j * nstep,
+                        zone.z[i, j],
+                        (int(color1.x) << 16) + (int(color1.y) << 8) + int(color1.z),
+                        # Corner 2
+                        probe.xmin + (i + 1) * mstep,
+                        probe.ymin + j * nstep,
+                        zone.z[i + 1, j],
+                        (int(color2.x) << 16) + (int(color2.y) << 8) + int(color2.z),
+                        # Corner 3
+                        probe.xmin + (i + 1) * mstep,
+                        probe.ymin + (j + 1) * nstep,
+                        zone.z[i + 1, j + 1],
+                        (int(color3.x) << 16) + (int(color3.y) << 8) + int(color3.z),
+                        # Corner 1
+                        probe.xmin + i * mstep,
+                        probe.ymin + j * nstep,
+                        zone.z[i, j],
+                        (int(color1.x) << 16) + (int(color1.y) << 8) + int(color1.z),
+                        # Corner 3
+                        probe.xmin + (i + 1) * mstep,
+                        probe.ymin + (j + 1) * nstep,
+                        zone.z[i + 1, j + 1],
+                        (int(color3.x) << 16) + (int(color3.y) << 8) + int(color3.z),
+                        # Corner 4
+                        probe.xmin + i * mstep,
+                        probe.ymin + (j + 1) * nstep,
+                        zone.z[i, j + 1],
+                        (int(color4.x) << 16) + (int(color4.y) << 8) + int(color4.z),
+                    ])
 
         probeMapVertices = numpy.array(probeMapData, dtype=numpy.float32)
 

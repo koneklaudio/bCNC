@@ -7,6 +7,7 @@ import math
 import os
 import re
 import types
+import numpy
 
 import undo
 import Unicode
@@ -114,6 +115,35 @@ def getValue(name, new, old, default=0.0):
         except Exception:
             return default
 
+# =============================================================================
+# Probing Zones (Rectangular)
+# =============================================================================
+class ProbeZone:
+    def __init__(self, name: str, xmin: float, ymin: float, zmin: float, xmax: float, ymax: float, zmax: float, 
+                 xn: int, yn: int, color: str = "yellow", active: bool = True, visible: bool = True):
+        self.rect = numpy.array([0, 0, -10, 10, 10, 3], dtype=numpy.float32) # xmin, ymin, zmin, xmax, ymax, zmax
+        self.xn = xn
+        self.yn = yn
+
+        self.color = color
+        self.active = active
+        self.visible = visible
+
+        self.z = None
+        self.pointStatus = None
+
+        self.makeMatrices()
+
+    # ----------------------------------------------------------------------
+    def makeMatrices(self):
+        self.z = numpy.full((self.xn, self.yn), 0., dtype=numpy.float32)
+        # Status of each zone grid point
+        # -1: Inactive
+        # 0: Not probed
+        # 1: Probed
+        # 2: Interpolated
+
+        self.pointStatus = numpy.full((self.xn, self.yn), 0, dtype=numpy.int32) 
 
 # =============================================================================
 # Probing class and linear interpolation
@@ -125,43 +155,144 @@ class Probe:
     # ----------------------------------------------------------------------
     def init(self):
         self.filename = ""
-        self.xmin = 0.0
-        self.ymin = 0.0
-        self.zmin = -10.0
 
-        self.xmax = 10.0
-        self.ymax = 10.0
-        self.zmax = 3.0
+        self._rects = None # numpy array with the rect of all the zones, to quickly check in which zone a point is
 
-        self._xstep = 1.0
-        self._ystep = 1.0
+        self.currentZone = None
+        self.zones = []
 
-        self.xn = 5
-        self.yn = 5
+        #defaultZone = ProbeZone("default", 0, 0, -10, 10, 10, 3, 5, 5)
+        #self.addZone(defaultZone)
 
-        self.points = []  # probe points
-        self.matrix = []  # 2D matrix with Z coordinates
         self.zeroed = False  # if probe was zeroed at any location
         self.start = False  # start collecting probes
         self.saved = False
+    
+    def isEmpty(self):
+        return len(self.zones) == 0
+
+    def addZone(self, zone: ProbeZone):
+        self.zones.append(zone)
+        self.currentZone = zone
+    
+    def updateRects(self):
+        if len(self.zones) == 0:
+            self._rects = None
+            return
+        
+        self._rects = self.zones[0].rect
+
+        for index in range(1, len(self.zones)):
+            self._rects = numpy.stack(self._rects, self.zones[index].rect)
+    
+    def findZone(self, x: float, y: float):
+        """
+        Returns the first zone where the point is in. If none is found, returns None.
+        """
+        if self._rects == None:
+            return
+        
+        point = numpy.array([x, y], dtype=numpy.float32)
+
+        inside = (
+        (point[0] >= self._rects[:, 0]) &
+        (point[0] <= self._rects[:, 3]) &
+        (point[1] >= self._rects[:, 1]) &
+        (point[1] <= self._rects[:, 4])
+        )
+
+        index = numpy.where(inside)[0] if len(inside) > 0 else None
+
+        return self.zones[index] if index is not None else None
+
+    @property
+    def xmin(self):
+        return self.currentZone.rect[0] if self.currentZone is not None else None
+    @xmin.setter
+    def xmin(self, value):
+        if self.currentZone is not None:
+            self.currentZone.rect[0] = value
+            self.currentZone.makeMatrices()
+    
+    @property
+    def ymin(self):
+        return self.currentZone.rect[1] if self.currentZone is not None else None
+    @ymin.setter
+    def ymin(self, value):
+        if self.currentZone is not None:
+            self.currentZone.rect[1] = value
+            self.currentZone.makeMatrices()
+
+    @property
+    def zmin(self):
+        return self.currentZone.rect[2] if self.currentZone is not None else None
+    @zmin.setter
+    def zmin(self, value):
+        if self.currentZone is not None:
+            self.currentZone.rect[2] = value
+
+    @property
+    def xmax(self):
+        return self.currentZone.rect[3] if self.currentZone is not None else None
+    @xmax.setter
+    def xmax(self, value):
+        if self.currentZone is not None:
+            self.currentZone.rect[3] = value
+            self.currentZone.makeMatrices()
+
+    @property
+    def ymax(self):
+        return self.currentZone.rect[4] if self.currentZone is not None else None
+    @ymax.setter
+    def ymax(self, value):
+        if self.currentZone is not None:
+            self.currentZone.rect[4] = value
+            self.currentZone.makeMatrices()
+            
+    @property
+    def zmax(self):
+        return self.currentZone.rect[5] if self.currentZone is not None else None
+    @zmax.setter
+    def zmax(self, value):
+        if self.currentZone is not None:
+            self.currentZone.rect[5] = value
+    
+    @property
+    def xn(self):
+        return self.currentZone.xn if self.currentZone is not None else None
+    @xn.setter
+    def xn(self, value):
+        if self.currentZone is not None:
+            self.currentZone.xn = value
+            self.currentZone.makeMatrices()
+    
+    @property
+    def yn(self):
+        return self.currentZone.yn if self.currentZone is not None else None
+    @yn.setter
+    def yn(self, value):
+        if self.currentZone is not None:
+            self.currentZone.yn = value
+            self.currentZone.makeMatrices()
+    
+    @property
+    def xstep(self):
+        return (self.currentZone.rect[3] - self.currentZone.rect[0]) / float(self.currentZone.xn - 1) if self.currentZone is not None else None
+
+    @property
+    def ystep(self):
+        return (self.currentZone.rect[4] - self.currentZone.rect[1]) / float(self.currentZone.yn - 1) if self.currentZone is not None else None
 
     # ----------------------------------------------------------------------
     def clear(self):
-        del self.points[:]
-        del self.matrix[:]
+        self._rects = None # numpy array with the rect of all the zones, to quickly check in which zone a point is
+
+        self.currentZone = None
+        self.zones = []
+
         self.zeroed = False
         self.start = False
         self.saved = False
-
-    # ----------------------------------------------------------------------
-    def isEmpty(self):
-        return len(self.matrix) == 0
-
-    # ----------------------------------------------------------------------
-    def makeMatrix(self):
-        del self.matrix[:]
-        for j in range(self.yn):
-            self.matrix.append([0.0] * (self.xn))
 
     # ----------------------------------------------------------------------
     # Load autolevel information from file
@@ -169,38 +300,78 @@ class Probe:
     def load(self, filename=None):
         if filename is not None:
             self.filename = filename
+            
         self.clear()
         self.saved = True
 
         def read(f):
+            lineType = None
+            data = None
+
             while True:
                 line = f.readline()
+
+                # Did the file end?
+                if not line:
+                    return None, None
+
+                # Empty line
                 assert line, "Read an empty line, please check file IO settings"
+
                 line = line.strip()
+
                 if line:
-                    return map(float, line.split())
+                    # Zone definition line
+                    if (line[0] == "[") and (line[len(line) - 1] == "]"):
+                        lineType = "Zone"
+                        data = line[1:-1].split()
+                    
+                    # Three float values
+                    elif len(data) == 3:
+                        lineType = "3F"
+                        data = map(float, line.split())
+                    
+                    return lineType, data
 
         f = open(self.filename)
-        self.xmin, self.xmax, self.xn = read(f)
-        self.ymin, self.ymax, self.yn = read(f)
-        self.zmin, self.zmax, feed = read(f)
-        CNC.vars["prbfeed"] = feed
 
-        self.xn = max(2, int(self.xn))
-        self.yn = max(2, int(self.yn))
+        expectedType = "Zone"
 
-        self.makeMatrix()
-        self.xstep()
-        self.ystep()
+        while True:
+            lineType, data = read(f)
 
-        self.start = True
-        try:
-            for j in range(self.yn):
-                for i in range(self.xn):
-                    self.add(*read(f))
-        except Exception:
-            raise
-        f.close()
+            if expectedType == "Zone":
+                if lineType == "Zone": # Create a new zone
+                    name = data[0]
+                else:
+                    name = "default"
+                # TODO: read Color, etc.
+                self.addZone(ProbeZone(name, 0, 0, -10, 10, 10, 3, 5, 5))
+
+                expectedType = "3F"
+            
+            elif expectedType == "3F":
+                if lineType == "3F":
+                    self.xmin, self.xmax, self.xn = read(f)
+                    self.ymin, self.ymax, self.yn = read(f)
+                    self.zmin, self.zmax, feed = read(f)
+                    CNC.vars["prbfeed"] = feed
+
+                    self.xn = max(2, int(self.xn))
+                    self.yn = max(2, int(self.yn))
+
+                    self.makeMatrix()
+                    self.xstep()
+                    self.ystep()
+
+                    self.start = True
+                    try:
+                        for j in range(self.yn):
+                            for i in range(self.xn):
+                                self.add(*read(f))
+                    except Exception:
+                        raise
+                    f.close()
 
     # ----------------------------------------------------------------------
     # Save level information to file
@@ -251,18 +422,6 @@ class Probe:
             writer.close()
 
     # ----------------------------------------------------------------------
-    # Return step
-    # ----------------------------------------------------------------------
-    def xstep(self):
-        self._xstep = (self.xmax - self.xmin) / float(self.xn - 1)
-        return self._xstep
-
-    # ----------------------------------------------------------------------
-    def ystep(self):
-        self._ystep = (self.ymax - self.ymin) / float(self.yn - 1)
-        return self._ystep
-
-    # ----------------------------------------------------------------------
     # Return the code needed to scan margins for autoleveling
     # ----------------------------------------------------------------------
     def scanMargins(self):
@@ -278,9 +437,12 @@ class Probe:
     # Return the code needed to scan for autoleveling
     # ----------------------------------------------------------------------
     def scan(self):
+        if self.currentZone == None:
+            return
+        
         self.clear()
         self.start = True
-        self.makeMatrix()
+        self.currentZone.makeMatrix()
         x = self.xmin
         xstep = self._xstep
         lines = [
@@ -309,6 +471,10 @@ class Probe:
     # Add a probed point to the list and the 3D matrix
     # ----------------------------------------------------------------------
     def add(self, x, y, z):
+        self.currentZone = self.findZone(x, y)
+        if self.currentZone == None:
+            return
+        
         if not self.start:
             return
         i = round((x - self.xmin) / self._xstep)
@@ -328,12 +494,12 @@ class Probe:
             return
 
         try:
-            self.matrix[int(j)][int(i)] = z
-            self.points.append([x, y, z])
+            self.currentZone.matrix[int(j)][int(i)] = z
+            self.currentZone.points.append([x, y, z])
         except IndexError:
             pass
 
-        if len(self.points) >= self.xn * self.yn:
+        if len(self.currentZone.points) >= self.xn * self.yn:
             self.start = False
 
     # ----------------------------------------------------------------------
