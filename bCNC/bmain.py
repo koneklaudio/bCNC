@@ -153,7 +153,7 @@ class Application(Tk, Sender):
         tkinter.CallWrapper = Utils.CallWrapper
         tkExtra.bindClasses(self)
 
-        self.openglContext = None # Point to the GLCanvas object owning the context
+        
 
         photo = PhotoImage(file=f"{Utils.prgpath}/bCNC.png")
         self.iconphoto(True, photo)
