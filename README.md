@@ -1,6 +1,9 @@
 bCNC
 ====
 
+## Apple/MacOS warning! We are working on new release and it seems to be broken on Mac, but have no way to test.
+## If you use MacOS, plese contact us [HERE](https://github.com/vlachoudis/bCNC/issues/591) so we can keep Mac support!
+
 GrblHAL (formerly GRBL) CNC command sender, autoleveler, g-code editor, digitizer, CAM
 and swiss army knife for all your CNC needs.
 
