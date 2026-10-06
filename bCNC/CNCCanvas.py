@@ -3,16 +3,15 @@
 # Author:       vvlachoudis@gmail.com
 # Date: 24-Aug-2014
 
-from gc import enable
 import math
 import time
 import sys
+import tkDialogs
 from numpy import deg2rad
 from tkinter_gl import GLCanvas
 
 import OpenGL
 
-from bCNC import ProgressDialog
 if sys.platform == 'linux':
     # PyOpenGL is broken with wayland:
     OpenGL.setPlatform('x11')
@@ -4579,22 +4578,18 @@ class CNCCanvas(GLCanvas):
         t = time.time()
         tr = t + 0.5 # Time when we refresh
 
-        pd = ProgressDialog.ProgressDialog(self.app, "Calculating final shape...")
-        self.update_idletasks()
-        self.update()
+        pd = tkDialogs.ProgressDialog(self.app, "Calculating final shape...")
 
         l = 0
         nl = len(lines16)
 
         for line in lines16:
             if time.time() >= tr:
-                if pd.cancelled:
+                if pd.ended:
                     break
+                
+                pd.show(l / nl * 100)
 
-                pd.setProgress(l / nl * 100)
-
-                self.update_idletasks()
-                self.update()
                 self.queueDraw()
                 tr += 0.5
 
@@ -4611,12 +4606,9 @@ class CNCCanvas(GLCanvas):
             
             l += 1
         
-        pd.grab_release()
-        pd.destroy()
+        pd.stop()
 
         self.queueDraw()
-    
-
 
     def resetStock(self):
         glDisable(GL_SCISSOR_TEST)

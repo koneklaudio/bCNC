@@ -51,9 +51,7 @@ from tkinter import (
     messagebox,
 )
 
-from glm import exp
 
-from bCNC import ColorCanvas
 
 try:
     import serial
