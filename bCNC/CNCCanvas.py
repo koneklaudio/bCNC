@@ -4664,10 +4664,9 @@ class CNCCanvas(GLCanvas):
 # Canvas Frame with toolbar
 # =============================================================================
 class CanvasFrame(Frame):
-    def __init__(self, master, app, enableSimulation = False, *kw, **kwargs):
+    def __init__(self, master, app, *kw, **kwargs):
         Frame.__init__(self, master, *kw, **kwargs)
         self.app = app
-        self.enableSimulation = enableSimulation
 
         self.draw_axes = BooleanVar()
         self.draw_grid = BooleanVar()
@@ -5119,7 +5118,7 @@ class CanvasFrame(Frame):
         tkExtra.Balloon.set(b, _("Set Canvas colors"))
         b.pack(side=LEFT)
 
-        if self.enableSimulation and (self.canvas.glslVersion == "1.20") and (not self.canvas.is_raspberry_pi()):
+        if (self.canvas.glslVersion == "1.20") and (not self.canvas.is_raspberry_pi()):
             b = Checkbutton(
                 toolbar,
                 image=Utils.icons["sim"],
