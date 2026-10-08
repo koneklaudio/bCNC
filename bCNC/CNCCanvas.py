@@ -440,7 +440,7 @@ class CNCCanvas(GLCanvas):
 
         # Data of Texture atlas for text rendering
         self.charOffsetAndWidth = []
-        self.create_char_texture("./bCNC/opengl/DejaVuSans.ttf", 12)
+        self.create_char_texture(f"{os.path.abspath(os.path.dirname(__file__))}{os.sep}opengl{os.sep}DejaVuSans.ttf", 12)
 
         self.createAxes(AXIS_LENGTH)
         self.createGantry()
@@ -2568,26 +2568,6 @@ class CNCCanvas(GLCanvas):
 
         self.queueDraw()
 
-    # ----------------------------------------------------------------------
-    # Return selected objects bounding box
-    # ----------------------------------------------------------------------
-    def selBbox(self):
-        x1 = None
-        for tag in ("sel", "sel2", "sel3", "sel4"):
-            bb = self.bbox(tag)
-            if bb is None:
-                continue
-            elif x1 is None:
-                x1, y1, x2, y2 = bb
-            else:
-                x1 = min(x1, bb[0])
-                y1 = min(y1, bb[1])
-                x2 = max(x2, bb[2])
-                y2 = max(y2, bb[3])
-
-        if x1 is None:
-            return self.bbox("all")
-        return x1, y1, x2, y2
 
     # ----------------------------------------------------------------------
     # Zoom to Fit to Screen
@@ -3049,17 +3029,6 @@ class CNCCanvas(GLCanvas):
         
         self.cameraLocation = vec2(x, y)
 
-    # ----------------------------------------------------------------------
-    # Crop center of camera and search it in subsequent movements
-    # ----------------------------------------------------------------------
-    def cameraMakeTemplate(self, r):
-        if self._cameraImage is None:
-            return
-        self._template = self.camera.getCenterTemplate(r)
-
-    # ----------------------------------------------------------------------
-    def cameraMatchTemplate(self):
-        return self.camera.matchTemplate(self._template)
 
     # ----------------------------------------------------------------------
     # Parse and draw the file from the editor to g-code commands
