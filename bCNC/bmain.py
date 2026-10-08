@@ -8,7 +8,6 @@ import os
 import socket
 import sys
 import time
-from tkinter.ttk import Notebook
 import traceback
 import webbrowser
 from datetime import datetime
@@ -50,8 +49,6 @@ from tkinter import (
     PanedWindow,
     messagebox,
 )
-
-
 
 try:
     import serial
@@ -153,8 +150,6 @@ class Application(Tk, Sender):
         tkinter.CallWrapper = Utils.CallWrapper
         tkExtra.bindClasses(self)
 
-        
-
         photo = PhotoImage(file=f"{Utils.prgpath}/bCNC.png")
         self.iconphoto(True, photo)
         self.title(f"{Utils.__prg__} {__version__} {__platform_fingerprint__}")
@@ -234,7 +229,6 @@ class Application(Tk, Sender):
         self.widgets.append(self.command)
 
         # --- Right side ---
-        # Canvas Frame. Contains both CNCCanvas and SimCanvas Pages
         frame = Frame(self.paned)
         self.paned.add(frame)
 
@@ -2816,8 +2810,6 @@ class Application(Tk, Sender):
                         if path:
                             self.lastProcessedPath = path
                     self._selectI += 1
-                
-                #self.canvas.vertices_to_buffer(self.canvas.pathVertices, self.canvas.pathVBO)
 
             if self._gcount >= self._runLines:
                 self.runEnded()

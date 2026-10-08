@@ -10,11 +10,6 @@ import tkDialogs
 from numpy import deg2rad
 from tkinter_gl import GLCanvas
 
-import OpenGL
-
-if sys.platform == 'linux':
-    # PyOpenGL is broken with wayland:
-    OpenGL.setPlatform('x11')
 
 try:
     import cv2 as cv
@@ -23,7 +18,7 @@ except ImportError:
 
 from OpenGL.GL import *
 from ctypes import c_void_p
-from pyglm.glm import mat4x4, mat3x3, ortho, identity, value_ptr, inverse, translate, rotate, vec2, vec3, vec4, inverse, normalize, lookAt, dot, cross, distance, length2
+from pyglm.glm import mat4x4, mat3x3, ortho, identity, value_ptr, inverse, translate, rotate, vec2, vec3, vec4, normalize, lookAt, dot, cross, distance, length2
 import os
 
 from tkinter import (
@@ -77,16 +72,12 @@ from CNC import CNC, Probe
 
 # Probe mapping we need PIL and numpy
 try:
-    from PIL import Image, ImageTk, ImageFont, ImageDraw
+    from PIL import Image, ImageFont, ImageDraw
     import numpy
 
-    # Resampling image based on PIL library and converting to RGB.
-    # options possible: NEAREST, BILINEAR, BICUBIC, ANTIALIAS
-    RESAMPLE = Image.NEAREST  # resize type
 except Exception:
     from tkinter import Image
     numpy = None
-    RESAMPLE = None
 
 try:
     import OpenGL
@@ -102,7 +93,7 @@ except ImportError:
         You can install it with "pip install PyOpenGL".
         """)
 
-ANTIALIAS_CHEAP = False
+
 
 VIEW_XY = 0
 VIEW_XZ = 1
@@ -187,8 +178,6 @@ MAXDIST = 10000
 ZOOM = 1.25
 AXIS_LENGTH = 100 # Coord system axis length in pixels
 
-S60 = math.sin(math.radians(60))
-C60 = math.cos(math.radians(60))
 
 DEF_CURSOR = ""
 MOUSE_CURSOR = {
@@ -224,6 +213,7 @@ STOCK_MAX_Y = 100
 STOCK_MIN_Z = -10.
 STOCK_MAX_Z = 0.
 MILL_TYPES = {"Flat": 0, "Ball": 1}
+MILL_TYPE = "Flat"
 MILL_DIAMETER = 6.
 
 # -----------------------------------------------------------------------------
@@ -249,8 +239,6 @@ class CNCCanvas(GLCanvas):
     def rgb8(self, colorName):
         return (numpy.array(self.winfo_rgb(colorName)) * 255. / 65535.).astype(int)
     
-    def rgb2float(self, rgb) -> float:
-        return float((int(rgb[0]) << 16) + (int(rgb[1]) << 8) + int(rgb[2]))
 
     def __init__(self, master, app, *kw, **kwargs):
         super().__init__(master) # TODO: Handle takefocus and background parameters
@@ -342,8 +330,6 @@ class CNCCanvas(GLCanvas):
         self._snapPoint = None
         self._snapPointType = 0
 
-        self._probeImage = None
-        self._probeTkImage = None
         self.probeMapHeightScale = 1
 
         self.camera = Camera.Camera("aligncam")
@@ -1145,30 +1131,6 @@ class CNCCanvas(GLCanvas):
         glBindBuffer(GL_ARRAY_BUFFER, 0)  # Unbind the VBO
 
         return vertices
-    
-    def vertices_to_buffer(self, vertices, buffer):
-        glBindBuffer(GL_ARRAY_BUFFER, buffer)
-        glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_DYNAMIC_DRAW)
-        glBindBuffer(GL_ARRAY_BUFFER, 0)  # Unbind the VBO
-
-    def get_color(self, linesVertices, lineId) -> float:
-        lines16 = numpy.reshape(linesVertices, (-1, 16))
-        index = numpy.searchsorted(lines16[:, 0], lineId, side='left')
-        
-        return lines16[index, 5]
-    
-    def set_color(self, linesVertices, lineId, colorFloat, bufferToUpdate = None):
-        lines16 = numpy.reshape(linesVertices, (-1, 16))
-        firstIndex = numpy.searchsorted(lines16[:, 0], lineId, side='left')
-        lastIndex = numpy.searchsorted(lines16[:, 0], lineId, side='right')
-
-        # TODO: Check that the lineId exists...
-        lines16[firstIndex:lastIndex, [5, 13]] = colorFloat
-
-        if bufferToUpdate is not None:
-            glBindBuffer(GL_ARRAY_BUFFER, bufferToUpdate)
-            glBufferSubData(GL_ARRAY_BUFFER, firstIndex * 16 * 4, (lastIndex - firstIndex) * 16 * 4, linesVertices[firstIndex * 16:])
-            glBindBuffer(GL_ARRAY_BUFFER, 0)
 
 
     def update_arrows_from_lines(self, arrows, arrowsBuffer, linesVertices):
@@ -1184,7 +1146,7 @@ class CNCCanvas(GLCanvas):
         for arrowId in arrows:
             lineId = int(arrowId)
             line16 = lines16[lines16[:, 0] == lineId]
-            if len(line16 > 0):
+            if len(line16) > 0:
                 line16 = line16[0]
                 #arrows[id] = [location, direction, width, height, colorRGB, flags]
 
@@ -1352,34 +1314,6 @@ class CNCCanvas(GLCanvas):
 
         return textVertices
 
-    # Calculate arguments for antialiasing
-    def antialias_args(self, args, winc=0.5, cw=2):
-        nargs = {}
-
-        # set defaults
-        nargs["width"] = 1
-        nargs["fill"] = "#000"
-
-        # get original args
-        for arg in args:
-            nargs[arg] = args[arg]
-        if nargs["width"] == 0:
-            nargs["width"] = 1
-
-        # calculate width
-        nargs["width"] += winc
-
-        # calculate color
-        cbg = self.winfo_rgb(self.cget("bg"))
-        cfg = list(self.winfo_rgb(nargs["fill"]))
-        cfg[0] = (cfg[0] + cbg[0] * cw) / (cw + 1)
-        cfg[1] = (cfg[1] + cbg[1] * cw) / (cw + 1)
-        cfg[2] = (cfg[2] + cbg[2] * cw) / (cw + 1)
-        nargs["fill"] = "#{:02x}{:02x}{:02x}".format(
-            int(cfg[0] / 256), int(cfg[1] / 256), int(cfg[2] / 256)
-        )
-
-        return nargs
 
     # ----------------------------------------------------------------------
     def reset(self):
@@ -3421,12 +3355,12 @@ class CNCCanvas(GLCanvas):
         glVertexAttribPointer(self.linesProgram_colorValue, 1, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(5*4))
         glVertexAttribPointer(self.linesProgram_dashRatio, 1, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(6*4))
         glVertexAttribPointer(self.linesProgram_flags, 1, GL_FLOAT, GL_FALSE, PARAMETERS_PER_VERTEX*4, c_void_p(7*4))
-        glEnableVertexAttribArray(self.linesProgram)
-        glEnableVertexAttribArray(self.linesProgram)
-        glEnableVertexAttribArray(self.linesProgram)
-        glEnableVertexAttribArray(self.linesProgram)
-        glEnableVertexAttribArray(self.linesProgram)
-        glEnableVertexAttribArray(self.linesProgram)
+        glEnableVertexAttribArray(self.linesProgram_id)  
+        glEnableVertexAttribArray(self.linesProgram_xyz)  
+        glEnableVertexAttribArray(self.linesProgram_pos)  
+        glEnableVertexAttribArray(self.linesProgram_colorValue)  
+        glEnableVertexAttribArray(self.linesProgram_dashRatio)  
+        glEnableVertexAttribArray(self.linesProgram_flags)
 
 
         MVP = self.PMatrix * self.MVMatrix
@@ -4900,11 +4834,11 @@ class CanvasFrame(Frame):
         self.stockZmin.set(Utils.getFloat("Simulation", "zmin", STOCK_MIN_Z))
         self.stockZmax.set(Utils.getFloat("Simulation", "zmax", STOCK_MAX_Z))
 
-        self.canvas.millType.set(Utils.getStr("Simulation", "milltype", "Flat"))
+        self.canvas.millType.set(Utils.getStr("Simulation", "milltype", MILL_TYPE))
         if self.canvas.millType.get() == '':
             self.canvas.millType.set("Flat")
 
-        self.canvas.millDiameter.set(Utils.getFloat("Simulation", "milldiameter", 6.0))
+        self.canvas.millDiameter.set(Utils.getFloat("Simulation", "milldiameter", MILL_DIAMETER))
         if self.canvas.millDiameter.get() == 0:
             self.canvas.millDiameter.set(6.0)
 
@@ -4942,7 +4876,7 @@ class CanvasFrame(Frame):
             Utils.setFloat("Simulation", "zmin", self.stockZmin.get())
             Utils.setFloat("Simulation", "zmax", self.stockZmax.get())
             Utils.setStr("Simulation", "milltype", self.canvas.millType.get())
-            Utils.setFloat("Simulation", "millDiameter", self.canvas.millDiameter.get())
+            Utils.setFloat("Simulation", "milldiameter", self.canvas.millDiameter.get())
             Utils.setInt("Simulation", "stockopacity", self.canvas.stockOpacity.get())
 
     # ----------------------------------------------------------------------
