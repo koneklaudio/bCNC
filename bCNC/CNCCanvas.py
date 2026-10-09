@@ -439,7 +439,6 @@ class CNCCanvas(GLCanvas):
         print("============================")
 
         # Data of Texture atlas for text rendering
-        self.charOffsetAndWidth = []
         self.create_char_texture(f"{os.path.abspath(os.path.dirname(__file__))}{os.sep}opengl{os.sep}DejaVuSans.ttf", 12)
 
         self.createAxes(AXIS_LENGTH)
@@ -481,11 +480,12 @@ class CNCCanvas(GLCanvas):
         # Full safe height for drawing
         self.textHeight = ascent + descent
 
-        # Get the width and offset of each char
+        # Printable ASCII only — Pillow+libraqm fails on control chars
+        self.charOffsetAndWidth = [[0, 0] for _ in range(128)]
         offset = 0
-        for ch in range(128):
+        for ch in range(32, 127):
             width = font.getlength(chr(ch))
-            self.charOffsetAndWidth.append([offset, width])
+            self.charOffsetAndWidth[ch] = [offset, width]
             offset += width
         
         image = Image.new("RGBA", (int(offset), int(self.textHeight)), (0, 0, 0, 0)) # type: ignore
@@ -494,7 +494,7 @@ class CNCCanvas(GLCanvas):
         draw = ImageDraw.Draw(image)
 
         # Create an image with all the ascii chars
-        for ch in range(128):
+        for ch in range(32, 127):
             draw.text((self.charOffsetAndWidth[ch][0], 0), chr(ch), fill="white", font=font)
         
         image = image.transpose(Image.FLIP_TOP_BOTTOM)  # OpenGL expects the y-axis to be flipped
